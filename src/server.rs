@@ -38,7 +38,6 @@ impl PawnProServer {
                 let severity = match d.severity {
                     Severity::Error => DiagnosticSeverity::ERROR,
                     Severity::Warning => DiagnosticSeverity::WARNING,
-                    Severity::Info => DiagnosticSeverity::INFORMATION,
                 };
                 let mut diag = Diagnostic {
                     range,

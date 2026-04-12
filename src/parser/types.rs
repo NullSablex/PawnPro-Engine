@@ -16,7 +16,6 @@ pub enum SymbolKind {
 pub struct Param {
     pub name: String,
     pub tag: Option<String>, // ex: "Float" em "Float:x"
-    pub has_default: bool,
     pub is_variadic: bool,   // "..."
 }
 
@@ -28,10 +27,6 @@ pub struct Symbol {
     /// Assinatura completa para funções, ex: "CreateVehicle(modelid, Float:x, ...)"
     pub signature: Option<String>,
     pub params: Vec<Param>,
-    /// Número mínimo de argumentos (sem default).
-    pub min_args: usize,
-    /// Número máximo de argumentos (None se variadic).
-    pub max_args: Option<usize>,
     /// Marcado com // @DEPRECATED ou /* @DEPRECATED */
     pub deprecated: bool,
     /// Comentário de documentação acima da declaração.

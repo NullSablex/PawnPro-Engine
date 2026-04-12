@@ -137,13 +137,10 @@ pub fn split_params(raw: &str) -> Vec<String> {
     params
 }
 
-/// Analisa os parâmetros brutos e retorna Vec<Param> + (min_args, max_args).
-fn parse_params(raw: &str) -> (Vec<Param>, usize, Option<usize>) {
+/// Analisa os parâmetros brutos e retorna Vec<Param>.
+fn parse_params(raw: &str) -> Vec<Param> {
     let parts = split_params(raw);
     let mut params = Vec::new();
-    let mut min_args = 0usize;
-    let mut total = 0usize;
-    let mut variadic = false;
 
     for p in &parts {
         let t = p.trim();
@@ -151,19 +148,12 @@ fn parse_params(raw: &str) -> (Vec<Param>, usize, Option<usize>) {
             continue;
         }
         if t == "..." || t.ends_with("...") {
-            variadic = true;
             params.push(Param {
                 name: "...".to_string(),
                 tag: None,
-                has_default: false,
                 is_variadic: true,
             });
             continue;
-        }
-        total += 1;
-        let has_default = t.contains('=');
-        if !has_default {
-            min_args += 1;
         }
         // Extrai nome e tag: "const Float:x[]" → name="x", tag="Float"
         // Remove qualificadores: const, &
@@ -199,12 +189,11 @@ fn parse_params(raw: &str) -> (Vec<Param>, usize, Option<usize>) {
             .take_while(|c| c.is_alphanumeric() || *c == '_')
             .collect::<String>();
         if !name.is_empty() {
-            params.push(Param { name, tag, has_default, is_variadic: false });
+            params.push(Param { name, tag, is_variadic: false });
         }
     }
 
-    let max_args = if variadic { None } else { Some(total) };
-    (params, min_args, max_args)
+    params
 }
 
 /// Extrai o comentário de documentação acima de uma linha (busca para trás).
@@ -226,7 +215,6 @@ fn extract_doc(lines: &[&str], line_idx: usize) -> Option<String> {
             found = true;
         } else if l.ends_with("*/") {
             doc_lines.push(l.to_string());
-            found = true;
             // busca o início do bloco
             let mut j = i - 1;
             while j >= 0 {
@@ -325,8 +313,6 @@ pub fn parse_file(text: &str) -> ParsedFile {
                     kind: SymbolKind::Define,
                     signature: None,
                     params: vec![],
-                    min_args: 0,
-                    max_args: Some(0),
                     deprecated,
                     doc: extract_doc(&raw_lines, line_idx),
                     line: line_idx as u32,
@@ -340,15 +326,13 @@ pub fn parse_file(text: &str) -> ParsedFile {
             if let Some(cap) = RX_NATIVE.captures(line) {
                 let name = cap[1].to_string();
                 let params_raw = cap.get(2).map(|m| m.as_str()).unwrap_or("");
-                let (params, min_args, max_args) = parse_params(params_raw);
+                let params = parse_params(params_raw);
                 let col = raw_line.find(&name).unwrap_or(0) as u32;
                 result.symbols.push(Symbol {
                     name: name.clone(),
                     kind: SymbolKind::Native,
                     signature: Some(format!("{}({})", name, params_raw.trim())),
                     params,
-                    min_args,
-                    max_args,
                     deprecated,
                     doc: extract_doc(&raw_lines, line_idx),
                     line: line_idx as u32,
@@ -362,15 +346,13 @@ pub fn parse_file(text: &str) -> ParsedFile {
             if let Some(cap) = RX_FORWARD.captures(line) {
                 let name = cap[1].to_string();
                 let params_raw = cap.get(2).map(|m| m.as_str()).unwrap_or("");
-                let (params, min_args, max_args) = parse_params(params_raw);
+                let params = parse_params(params_raw);
                 let col = raw_line.find(&name).unwrap_or(0) as u32;
                 result.symbols.push(Symbol {
                     name: name.clone(),
                     kind: SymbolKind::Forward,
                     signature: Some(format!("{}({})", name, params_raw.trim())),
                     params,
-                    min_args,
-                    max_args,
                     deprecated,
                     doc: extract_doc(&raw_lines, line_idx),
                     line: line_idx as u32,
@@ -385,7 +367,7 @@ pub fn parse_file(text: &str) -> ParsedFile {
                 let kw = &cap[1];
                 let name = cap[2].to_string();
                 let params_raw = cap.get(3).map(|m| m.as_str()).unwrap_or("");
-                let (params, min_args, max_args) = parse_params(params_raw);
+                let params = parse_params(params_raw);
                 let col = raw_line.find(&name).unwrap_or(0) as u32;
                 let kind = if kw == "public" { SymbolKind::Public } else { SymbolKind::Stock };
                 result.symbols.push(Symbol {
@@ -393,8 +375,6 @@ pub fn parse_file(text: &str) -> ParsedFile {
                     kind,
                     signature: Some(format!("{}({})", name, params_raw.trim())),
                     params,
-                    min_args,
-                    max_args,
                     deprecated,
                     doc: extract_doc(&raw_lines, line_idx),
                     line: line_idx as u32,
@@ -413,8 +393,6 @@ pub fn parse_file(text: &str) -> ParsedFile {
                     kind: SymbolKind::StaticConst,
                     signature: None,
                     params: vec![],
-                    min_args: 0,
-                    max_args: Some(0),
                     deprecated,
                     doc: extract_doc(&raw_lines, line_idx),
                     line: line_idx as u32,
@@ -428,15 +406,13 @@ pub fn parse_file(text: &str) -> ParsedFile {
             if let Some(cap) = RX_STATIC_FUNC.captures(line) {
                 let name = cap[1].to_string();
                 let params_raw = cap.get(2).map(|m| m.as_str()).unwrap_or("");
-                let (params, min_args, max_args) = parse_params(params_raw);
+                let params = parse_params(params_raw);
                 let col = raw_line.find(&name).unwrap_or(0) as u32;
                 result.symbols.push(Symbol {
                     name: name.clone(),
                     kind: SymbolKind::Static,
                     signature: Some(format!("{}({})", name, params_raw.trim())),
                     params,
-                    min_args,
-                    max_args,
                     deprecated,
                     doc: extract_doc(&raw_lines, line_idx),
                     line: line_idx as u32,
@@ -450,15 +426,13 @@ pub fn parse_file(text: &str) -> ParsedFile {
             if let Some(cap) = RX_FLOAT_BOOL_FUNC.captures(line) {
                 let name = cap[2].to_string();
                 let params_raw = cap.get(3).map(|m| m.as_str()).unwrap_or("");
-                let (params, min_args, max_args) = parse_params(params_raw);
+                let params = parse_params(params_raw);
                 let col = raw_line.find(&name).unwrap_or(0) as u32;
                 result.symbols.push(Symbol {
                     name: name.clone(),
                     kind: SymbolKind::Stock, // tratado como stock (tem corpo)
                     signature: Some(format!("{}:{} ({})", &cap[1], name, params_raw.trim())),
                     params,
-                    min_args,
-                    max_args,
                     deprecated,
                     doc: extract_doc(&raw_lines, line_idx),
                     line: line_idx as u32,
@@ -469,27 +443,22 @@ pub fn parse_file(text: &str) -> ParsedFile {
             }
 
             // Variáveis: new/const [Tag:]name  (tag corretamente ignorada)
-            {
-                let mut var_rx_iter = RX_VAR.captures_iter(line);
-                while let Some(cap) = var_rx_iter.next() {
-                    let name = cap[2].to_string();
-                    if RESERVED.contains(name.as_str()) {
-                        continue;
-                    }
-                    let col = raw_line.find(&name).unwrap_or(0) as u32;
-                    result.symbols.push(Symbol {
-                        name,
-                        kind: SymbolKind::Variable,
-                        signature: None,
-                        params: vec![],
-                        min_args: 0,
-                        max_args: Some(0),
-                        deprecated,
-                        doc: None,
-                        line: line_idx as u32,
-                        col,
-                    });
+            for cap in RX_VAR.captures_iter(line) {
+                let name = cap[2].to_string();
+                if RESERVED.contains(name.as_str()) {
+                    continue;
                 }
+                let col = raw_line.find(&name).unwrap_or(0) as u32;
+                result.symbols.push(Symbol {
+                    name,
+                    kind: SymbolKind::Variable,
+                    signature: None,
+                    params: vec![],
+                    deprecated,
+                    doc: None,
+                    line: line_idx as u32,
+                    col,
+                });
             }
 
             // static como variável: static [Tag:]name = ...
@@ -502,8 +471,6 @@ pub fn parse_file(text: &str) -> ParsedFile {
                         kind: SymbolKind::Variable,
                         signature: None,
                         params: vec![],
-                        min_args: 0,
-                        max_args: Some(0),
                         deprecated,
                         doc: None,
                         line: line_idx as u32,

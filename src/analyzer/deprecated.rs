@@ -120,16 +120,14 @@ pub fn analyze_deprecated(
             let line = &stripped.text;
             if line.trim().is_empty() { continue; }
 
-            if pending_deprecated {
-                if let Some(cap) = RX_INCLUDE.captures(line) {
-                    let token = cap.get(1).or(cap.get(2)).map(|m| m.as_str().trim()).unwrap_or("");
-                    let col = raw_line.find(token).unwrap_or(0) as u32;
-                    diags.push(PawnDiagnostic::warning(
-                        line_idx as u32, col, col + token.len() as u32,
-                        codes::PP0008,
-                        format!("\"{}\" está depreciado", token),
-                    ));
-                }
+            if pending_deprecated && let Some(cap) = RX_INCLUDE.captures(line) {
+                let token = cap.get(1).or(cap.get(2)).map(|m| m.as_str().trim()).unwrap_or("");
+                let col = raw_line.find(token).unwrap_or(0) as u32;
+                diags.push(PawnDiagnostic::warning(
+                    line_idx as u32, col, col + token.len() as u32,
+                    codes::PP0008,
+                    format!("\"{}\" está depreciado", token),
+                ));
             }
             pending_deprecated = false;
         }
