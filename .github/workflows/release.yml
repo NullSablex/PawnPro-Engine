@@ -34,7 +34,7 @@ jobs:
             use_cross: false
 
           - target: x86_64-apple-darwin
-            os: macos-13
+            os: macos-latest
             artifact: pawnpro-engine-darwin-x64
             use_cross: false
 
@@ -85,7 +85,7 @@ jobs:
         run: Copy-Item "target\${{ matrix.target }}\release\pawnpro-engine.exe" "${{ matrix.artifact }}"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.artifact }}
@@ -101,7 +101,7 @@ jobs:
 
     steps:
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           path: dist/
           merge-multiple: true
