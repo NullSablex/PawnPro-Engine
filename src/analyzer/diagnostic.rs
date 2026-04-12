@@ -3,7 +3,6 @@
 pub enum Severity {
     Error,
     Warning,
-    Info,
 }
 
 /// Diagnóstico emitido pelos analyzers (independente do LSP).

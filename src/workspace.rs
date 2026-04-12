@@ -10,7 +10,6 @@ use crate::parser::{parse_file, ParsedFile};
 /// Representa um documento aberto (pelo editor) ou lido do disco.
 #[derive(Debug, Clone)]
 pub struct Document {
-    pub uri: String,
     pub text: String,
     pub version: i32,
 }
@@ -47,7 +46,7 @@ impl WorkspaceState {
     pub fn open_document(&self, uri: String, text: String, version: i32) {
         let key = uri_to_cache_key(&uri);
         self.parsed_cache.remove(&key);
-        self.open_docs.insert(uri, Document { uri: key.clone(), text, version });
+        self.open_docs.insert(uri, Document { text, version });
     }
 
     pub fn change_document(&self, uri: &str, text: String, version: i32) {
@@ -57,7 +56,7 @@ impl WorkspaceState {
             doc.text = text;
             doc.version = version;
         } else {
-            self.open_docs.insert(uri.to_string(), Document { uri: key, text, version });
+            self.open_docs.insert(uri.to_string(), Document { text, version });
         }
     }
 
@@ -156,14 +155,13 @@ fn percent_decode(s: &str) -> String {
     let bytes = s.as_bytes();
     let mut i = 0;
     while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let Ok(hex) = std::str::from_utf8(&bytes[i + 1..i + 3]) {
-                if let Ok(byte) = u8::from_str_radix(hex, 16) {
-                    out.push(byte as char);
-                    i += 3;
-                    continue;
-                }
-            }
+        if bytes[i] == b'%' && i + 2 < bytes.len()
+            && let Ok(hex) = std::str::from_utf8(&bytes[i + 1..i + 3])
+            && let Ok(byte) = u8::from_str_radix(hex, 16)
+        {
+            out.push(byte as char);
+            i += 3;
+            continue;
         }
         out.push(bytes[i] as char);
         i += 1;

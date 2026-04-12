@@ -24,10 +24,10 @@ impl EngineConfig {
     pub fn load(workspace_root: Option<&Path>) -> Self {
         let mut cfg = Self::load_global().unwrap_or_default();
 
-        if let Some(root) = workspace_root {
-            if let Ok(project_cfg) = Self::load_from(root.join(".pawnpro").join("config.json")) {
-                cfg.merge(project_cfg);
-            }
+        if let Some(root) = workspace_root
+            && let Ok(project_cfg) = Self::load_from(root.join(".pawnpro").join("config.json"))
+        {
+            cfg.merge(project_cfg);
         }
         cfg
     }

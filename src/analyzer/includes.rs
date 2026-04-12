@@ -91,6 +91,14 @@ fn build_not_found_message(
     msg
 }
 
+struct CollectCtx<'a> {
+    include_paths: &'a [PathBuf],
+    out: &'a mut Vec<PathBuf>,
+    seen: &'a mut std::collections::HashSet<PathBuf>,
+    max_depth: usize,
+    max_files: usize,
+}
+
 /// Resolve todas as includes recursivamente e retorna os caminhos.
 pub fn collect_included_files(
     file_path: &Path,
@@ -103,39 +111,36 @@ pub fn collect_included_files(
     let mut seen = std::collections::HashSet::new();
     let file_dir = file_path.parent().unwrap_or(Path::new("."));
 
-    collect_recursive(directives, file_dir, include_paths, &mut out, &mut seen, 1, max_depth, max_files);
+    let mut ctx = CollectCtx { include_paths, out: &mut out, seen: &mut seen, max_depth, max_files };
+    collect_recursive(&mut ctx, directives, file_dir, 1);
     out
 }
 
 fn collect_recursive(
+    ctx: &mut CollectCtx<'_>,
     directives: &[IncludeDirective],
     file_dir: &Path,
-    include_paths: &[PathBuf],
-    out: &mut Vec<PathBuf>,
-    seen: &mut std::collections::HashSet<PathBuf>,
     depth: usize,
-    max_depth: usize,
-    max_files: usize,
 ) {
-    if out.len() >= max_files {
+    if ctx.out.len() >= ctx.max_files {
         return;
     }
     for dir in directives {
-        let Some(resolved) = resolve_include(dir, file_dir, include_paths) else { continue };
+        let Some(resolved) = resolve_include(dir, file_dir, ctx.include_paths) else { continue };
         let norm = resolved.canonicalize().unwrap_or(resolved.clone());
-        if seen.contains(&norm) {
+        if ctx.seen.contains(&norm) {
             continue;
         }
-        seen.insert(norm.clone());
-        out.push(resolved.clone());
+        ctx.seen.insert(norm.clone());
+        ctx.out.push(resolved.clone());
 
-        if depth < max_depth {
+        if depth < ctx.max_depth {
             // Lê e parseia o arquivo incluído para seguir suas includes
             if let Ok(text) = std::fs::read(&resolved) {
                 let text = decode_text(&text);
                 let nested = crate::parser::parse_file(&text);
                 let nested_dir = resolved.parent().unwrap_or(Path::new("."));
-                collect_recursive(&nested.includes, nested_dir, include_paths, out, seen, depth + 1, max_depth, max_files);
+                collect_recursive(ctx, &nested.includes, nested_dir, depth + 1);
             }
         }
     }
