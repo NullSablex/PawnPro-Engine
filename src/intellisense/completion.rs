@@ -2,13 +2,40 @@ use std::collections::HashSet;
 
 use tower_lsp::lsp_types::*;
 
-use crate::parser::types::SymbolKind;
 use crate::workspace::WorkspaceState;
 
 use super::collect_all_symbols;
 
-/// Retorna completions para o arquivo identificado por `uri`.
-/// Inclui símbolos do próprio arquivo + todos os includes transitivos.
+pub fn get_at_completions(in_comment: bool, line: u32, at_col: u32) -> Vec<CompletionItem> {
+    if in_comment {
+        vec![CompletionItem {
+            label: "@DEPRECATED".to_string(),
+            kind: Some(CompletionItemKind::KEYWORD),
+            detail: Some("Marca o símbolo seguinte como depreciado".to_string()),
+            insert_text: Some("DEPRECATED".to_string()),
+            insert_text_format: Some(InsertTextFormat::PLAIN_TEXT),
+            sort_text: Some("0_DEPRECATED".to_string()),
+            ..Default::default()
+        }]
+    } else {
+        let range = Range {
+            start: Position { line, character: at_col },
+            end:   Position { line, character: at_col + 1 },
+        };
+        vec![CompletionItem {
+            label: "@DEPRECATED".to_string(),
+            kind: Some(CompletionItemKind::KEYWORD),
+            detail: Some("Marca o símbolo seguinte como depreciado".to_string()),
+            text_edit: Some(CompletionTextEdit::Edit(TextEdit {
+                range,
+                new_text: "// @DEPRECATED".to_string(),
+            })),
+            sort_text: Some("0_DEPRECATED".to_string()),
+            ..Default::default()
+        }]
+    }
+}
+
 pub fn get_completions(state: &WorkspaceState, uri: &str) -> Vec<CompletionItem> {
     let Some(file_path) = crate::workspace::uri_to_path(uri) else {
         return vec![];
@@ -17,27 +44,22 @@ pub fn get_completions(state: &WorkspaceState, uri: &str) -> Vec<CompletionItem>
         return vec![];
     };
     let inc_paths = state.include_paths();
-
     let all_syms = collect_all_symbols(state, &file_path, &inc_paths, &parsed);
 
-    let mut items = Vec::new();
+    let mut items: Vec<CompletionItem> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
 
     for sym in &all_syms {
-        // Variáveis locais não são oferecidas como completions globais
-        if matches!(sym.kind, SymbolKind::Variable) {
+        if !seen.insert(sym.name.clone()) {
             continue;
         }
-        if !seen.insert(sym.name.clone()) {
-            continue; // deduplicação
-        }
-        items.push(build_item(sym));
+        items.push(build_symbol_item(sym));
     }
 
     items
 }
 
-fn build_item(sym: &crate::parser::types::Symbol) -> CompletionItem {
+fn build_symbol_item(sym: &crate::parser::types::Symbol) -> CompletionItem {
     use crate::parser::types::SymbolKind::*;
 
     let kind = Some(match sym.kind {
@@ -46,7 +68,6 @@ fn build_item(sym: &crate::parser::types::Symbol) -> CompletionItem {
         Variable => CompletionItemKind::VARIABLE,
     });
 
-    // Snippet com placeholders para cada parâmetro
     let (insert_text, insert_text_format) = if sym.signature.is_some() && !sym.params.is_empty() {
         let parts: Vec<String> = sym
             .params
@@ -65,7 +86,6 @@ fn build_item(sym: &crate::parser::types::Symbol) -> CompletionItem {
             Some(InsertTextFormat::SNIPPET),
         )
     } else if sym.signature.is_some() {
-        // Função sem parâmetros
         (
             Some(format!("{}()", sym.name)),
             Some(InsertTextFormat::PLAIN_TEXT),
@@ -86,6 +106,7 @@ fn build_item(sym: &crate::parser::types::Symbol) -> CompletionItem {
         }),
         insert_text,
         insert_text_format,
+        sort_text: Some(format!("0_{}", sym.name)),
         ..Default::default()
     };
 

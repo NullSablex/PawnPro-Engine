@@ -14,7 +14,6 @@ static RX_INCLUDE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r#"#\s*include\s*(?:<([^>]+)>|"([^"]+)")"#).unwrap()
 });
 
-/// Retorna informação de hover para a posição `position` no arquivo `uri`.
 pub fn get_hover(state: &WorkspaceState, uri: &str, position: Position) -> Option<Hover> {
     let text = state.get_text(uri)?;
     let file_path = crate::workspace::uri_to_path(uri)?;
@@ -30,12 +29,10 @@ pub fn get_hover(state: &WorkspaceState, uri: &str, position: Position) -> Optio
     }
     let line = lines[line_idx];
 
-    // Hover em diretiva #include → exibe o caminho resolvido
-    if let Some(h) = hover_include(line, &file_path, &inc_paths) {
+    if let Some(h) = hover_include(line, &file_path, &inc_paths, state.workspace_root.as_deref()) {
         return Some(h);
     }
 
-    // Hover em identificador → busca nos símbolos
     let word = extract_word(line, col)?;
     let all_syms = collect_all_symbols(state, &file_path, &inc_paths, &parsed);
     let sym = all_syms.iter().find(|s| s.name == word)?;
@@ -43,12 +40,11 @@ pub fn get_hover(state: &WorkspaceState, uri: &str, position: Position) -> Optio
     Some(format_symbol(sym))
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
 fn hover_include(
     line: &str,
     file_path: &Path,
     inc_paths: &[std::path::PathBuf],
+    workspace_root: Option<&Path>,
 ) -> Option<Hover> {
     if !line.trim().starts_with('#') {
         return None;
@@ -60,15 +56,12 @@ fn hover_include(
         (cap.get(2)?.as_str().to_string(), false)
     };
 
-    let dir = IncludeDirective { token: token.clone(), is_angle, line: 0, col: 0 };
+    let dir = IncludeDirective { token: token.clone(), is_angle, is_try: false, line: 0, col: 0 };
     let file_dir = file_path.parent().unwrap_or(Path::new("."));
-    let resolved = resolve_include(&dir, file_dir, inc_paths)?;
+    resolve_include(&dir, file_dir, inc_paths)?;
 
-    let md = format!(
-        "```\n{}\n```\n\nResolve para: `{}`",
-        line.trim(),
-        resolved.display()
-    );
+    let _ = workspace_root;
+    let md = format!("```\n{}\n```\n\n`{}`", line.trim(), token);
     Some(Hover {
         contents: HoverContents::Markup(MarkupContent { kind: MarkupKind::Markdown, value: md }),
         range: None,

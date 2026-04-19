@@ -1,5 +1,16 @@
 <div align="center">
   <img src="images/logo.png" alt="PawnPro Engine" />
+
+  [![CI](https://img.shields.io/github/actions/workflow/status/NullSablex/PawnPro-Engine/ci.yml?style=flat-square&label=CI)](https://github.com/NullSablex/PawnPro-Engine/actions)
+  [![Release](https://img.shields.io/github/v/release/NullSablex/PawnPro-Engine?style=flat-square&label=release)](https://github.com/NullSablex/PawnPro-Engine/releases)
+  [![Rust](https://img.shields.io/badge/rust-stable-orange?style=flat-square&logo=rust)](https://www.rust-lang.org)
+  [![LSP](https://img.shields.io/badge/protocolo-LSP-informational?style=flat-square)](https://microsoft.github.io/language-server-protocol/)
+  [![Clippy](https://img.shields.io/github/actions/workflow/status/NullSablex/PawnPro-Engine/ci.yml?style=flat-square&label=Clippy&logo=rust)](https://github.com/NullSablex/PawnPro-Engine/actions/workflows/ci.yml)
+  [![License](https://img.shields.io/badge/licença-Source--Available-blue?style=flat-square)](LICENSE.md)
+
+  ![Windows x64](https://img.shields.io/badge/Windows-x64-0078D4?style=flat-square&logo=windows11&logoColor=white)
+  ![Linux x64 · arm64](https://img.shields.io/badge/Linux-x64%20·%20arm64-FCC624?style=flat-square&logo=linux&logoColor=black)
+  ![macOS x64 · arm64](https://img.shields.io/badge/macOS-x64%20·%20arm64-000000?style=flat-square&logo=apple&logoColor=white)
 </div>
 
 Motor IntelliSense para a linguagem **Pawn** — servidor LSP em Rust integrado à extensão [PawnPro](https://github.com/NullSablex/PawnPro) para Visual Studio Code.
@@ -8,37 +19,19 @@ Motor IntelliSense para a linguagem **Pawn** — servidor LSP em Rust integrado 
 
 `pawnpro-engine` é o núcleo de análise do PawnPro. Roda como processo separado e se comunica com o editor via **Language Server Protocol (LSP)** sobre stdin/stdout — o mesmo protocolo usado por `rust-analyzer` e `clangd`.
 
-A extensão PawnPro inicia o motor automaticamente ao detectar o binário. Se o binário não estiver presente, a extensão cai em modo TypeScript como fallback transparente.
+A extensão PawnPro inicia o motor automaticamente ao detectar o binário. Se o binário não estiver presente, a extensão recua para o modo TypeScript como fallback transparente.
 
-## Funcionalidades
+## Capacidades
 
-### Diagnósticos
+- **Diagnósticos** — 13 códigos `PP####` cobrindo erros de estrutura, código morto, símbolos não declarados e depreciação (ver [docs/diagnostics.md](docs/diagnostics.md)).
+- **Completions** — símbolos de todos os includes transitivos com snippets de parâmetros; itens depreciados marcados.
+- **Hover** — assinatura e comentário de documentação; em `#include` mostra o caminho resolvido.
+- **Signature Help** — parâmetro ativo destacado ao digitar `(` e `,`.
+- **CodeLens** — contagem de referências para todas as funções; clicável.
+- **References** — `textDocument/references` (Shift+F12).
+- **Semantic Tokens** — coloração semântica com suporte a chamadas multiline.
 
-| Código | Descrição |
-|--------|-----------|
-| PP0001 | `#include` não encontrado |
-| PP0002 | `native` com corpo `{}` |
-| PP0003 | `forward` com corpo `{}` |
-| PP0004 | `public`/`stock`/`static` sem corpo |
-| PP0005 | Variável declarada e não utilizada |
-| PP0006 | Função `stock`/`static` declarada e não utilizada |
-| PP0007 | Uso de símbolo marcado com `@DEPRECATED` |
-| PP0008 | `#include` de arquivo marcado com `@DEPRECATED` |
-
-### IntelliSense
-
-- **Completions** — `native`, `stock`, `public`, `forward`, `static`, `#define` de todos os includes transitivos; snippets com parâmetros; deprecated marcado visivelmente
-- **Hover** — assinatura + comentário de doc; em `#include` exibe o caminho resolvido
-- **Signature Help** — parâmetro ativo destacado ao digitar `(` e `,`
-- **CodeLens** — contagem de referências para todas as funções; funciona em `.inc`
-
-### Parser
-
-- `native`, `forward`, `public`, `stock`, `static`, `static const`, `float`/`bool` como tipo de retorno
-- Tags Pawn (`Float:`, `File:`, etc.) — corretamente ignoradas na detecção de nomes
-- `#define`, `#include <token>` e `#include "caminho/relativo"`
-- `// @DEPRECATED` e `/* @DEPRECATED */` (case-insensitive)
-- Comentários de doc extraídos acima de cada declaração
+Para detalhes do protocolo e das opções de configuração, consulte [docs/lsp.md](docs/lsp.md).
 
 ## Plataformas
 
@@ -50,67 +43,24 @@ A extensão PawnPro inicia o motor automaticamente ao detectar o binário. Se o 
 | macOS x64 | `pawnpro-engine-darwin-x64` |
 | macOS arm64 | `pawnpro-engine-darwin-arm64` |
 
-Os binários são compilados estáticos (musl no Linux) — sem dependências externas.
-
-## Configuração
-
-O motor lê automaticamente:
-- `~/.pawnpro/config.json` — configuração global
-- `.pawnpro/config.json` — configuração do projeto (sobrescreve global)
-
-### Chaves relevantes
-
-```json
-{
-  "includePaths": ["${workspaceFolder}/pawno/include"],
-  "analysis": {
-    "warnUnusedInInc": false
-  }
-}
-```
-
-- **`includePaths`** — diretórios para resolver `#include <token>`; suporta `${workspaceFolder}`
-- **`analysis.warnUnusedInInc`** — habilita avisos de símbolos não usados em `.inc` (padrão: `false`)
+Os binários são compilados com LTO, strip e `panic = abort` — sem dependências externas em runtime.
 
 ## Desenvolvimento
 
-### Pré-requisitos
-
-- Rust stable (`rustup install stable`)
-
-### Build
+**Pré-requisitos:** Rust stable (`rustup install stable`)
 
 ```bash
 git clone https://github.com/NullSablex/PawnPro-Engine
 cd pawnpro-engine
-cargo build
-```
-
-O binário estará em `target/debug/pawnpro-engine`. A extensão PawnPro o detecta automaticamente se estiver na pasta irmã `../pawnpro-engine/target/debug/`.
-
-### Testes
-
-```bash
+cargo build          # debug
+cargo build --release
 cargo test
-```
-
-### Lint
-
-```bash
 cargo clippy -- -D warnings
 ```
 
-## Uso como LSP standalone
-
-O motor segue o protocolo LSP padrão e pode ser integrado em qualquer editor com suporte a LSP:
-
-```
-pawnpro-engine
-```
-
-Lê de stdin e escreve em stdout. Não requer argumentos.
+O binário de debug é detectado automaticamente pela extensão PawnPro se estiver em `../pawnpro-engine/target/debug/` ou `../pawnpro-engine/target/release/`.
 
 ## Licença
 
 PawnPro Engine License v1.0 — Source-Available (não Open Source).  
-Uso comercial permitido ✅ · Venda proibida ❌ · Detalhes: [LICENSE.md](LICENSE.md)
+Uso pessoal e comercial permitido ✅ · Redistribuição e venda proibidas ❌ · Detalhes: [LICENSE.md](LICENSE.md)

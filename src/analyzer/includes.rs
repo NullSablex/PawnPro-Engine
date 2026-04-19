@@ -1,12 +1,24 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use crate::parser::IncludeDirective;
+use crate::parser::{parse_file, IncludeDirective, ParsedFile};
+use crate::parser::lexer::decode_bytes;
 
 use super::{codes, diagnostic::PawnDiagnostic};
 
-/// Tenta resolver um token de include para um caminho de arquivo real.
-/// - `<token>` → busca em `include_paths`; tenta adicionar `.inc` se sem extensão
-/// - `"path"` → resolve relativo a `file_dir`; respeita a extensão presente
+#[derive(Clone)]
+pub struct IncludeEntry {
+    pub text: String,
+    pub parsed: ParsedFile,
+}
+
+pub struct ResolvedIncludes {
+    pub paths: Vec<PathBuf>,
+    pub files: HashMap<PathBuf, IncludeEntry>,
+}
+
+// Quotes search relative to the current file first, then fall back to include_paths —
+// matching the Pawn compiler's own resolution order.
 pub fn resolve_include(
     directive: &IncludeDirective,
     file_dir: &Path,
@@ -15,50 +27,95 @@ pub fn resolve_include(
     let token = &directive.token;
 
     if directive.is_angle {
-        // Busca em include_paths
         for base in include_paths {
             if let Some(p) = try_resolve(base.join(token)) {
                 return Some(p);
             }
         }
     } else {
-        // Relativo ao diretório do arquivo atual
         if let Some(p) = try_resolve(file_dir.join(token)) {
             return Some(p);
+        }
+        for base in include_paths {
+            if let Some(p) = try_resolve(base.join(token)) {
+                return Some(p);
+            }
         }
     }
     None
 }
 
-/// Tenta o caminho como-está, depois com `.inc` adicionado.
+// On Linux, performs a case-insensitive directory scan when the exact path fails,
+// covering mismatched casing like `evf.inc` vs `EVF.inc`.
 fn try_resolve(path: PathBuf) -> Option<PathBuf> {
     if path.exists() {
         return Some(path);
     }
-    // Tenta adicionar .inc se não tem extensão
-    if path.extension().is_none() {
-        let with_inc = path.with_extension("inc");
-        if with_inc.exists() {
-            return Some(with_inc);
+    let with_inc = PathBuf::from(format!("{}.inc", path.to_string_lossy()));
+    if with_inc.exists() {
+        return Some(with_inc);
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let candidates = [&path, &with_inc];
+        for candidate in candidates {
+            if let (Some(parent), Some(file_name)) = (candidate.parent(), candidate.file_name()) {
+                let needle = file_name.to_string_lossy().to_ascii_lowercase();
+                if let Ok(entries) = std::fs::read_dir(parent) {
+                    for entry in entries.flatten() {
+                        let entry_name = entry.file_name();
+                        if entry_name.to_string_lossy().to_ascii_lowercase() == needle {
+                            return Some(entry.path());
+                        }
+                    }
+                }
+            }
         }
     }
+
     None
 }
 
-/// Analisa as diretivas #include de um arquivo e gera diagnósticos para os não encontrados.
 pub fn analyze_includes(
     directives: &[IncludeDirective],
     file_path: &Path,
     include_paths: &[PathBuf],
+    workspace_root: Option<&Path>,
 ) -> Vec<PawnDiagnostic> {
     let mut diags = Vec::new();
     let file_dir = file_path.parent().unwrap_or(Path::new("."));
 
     for dir in directives {
-        if resolve_include(dir, file_dir, include_paths).is_none() {
-            let msg = build_not_found_message(dir, file_dir, include_paths);
-            let col_end = dir.col + dir.token.len() as u32;
-            diags.push(PawnDiagnostic::error(dir.line, dir.col, col_end, codes::PP0001, msg));
+        let col_end = dir.col + dir.token.len() as u32;
+        match resolve_include(dir, file_dir, include_paths) {
+            None => {
+                if dir.is_try {
+                    // #tryinclude não resolvido é informativo, não um erro
+                    diags.push(PawnDiagnostic::hint(
+                        dir.line, dir.col, col_end,
+                        codes::PP0013,
+                        format!("\"{}\" não encontrado — #tryinclude ignorado pelo compilador", dir.token),
+                    ));
+                } else {
+                    let msg = build_not_found_message(dir, file_dir, include_paths);
+                    diags.push(PawnDiagnostic::error(dir.line, dir.col, col_end, codes::PP0001, msg));
+                }
+            }
+            Some(resolved) => {
+                // Sinaliza apenas se o caminho resolvido escapa o workspace root
+                if let Some(root) = workspace_root {
+                    let canon = resolved.canonicalize().unwrap_or_else(|_| resolved.clone());
+                    let root_canon = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+                    if !canon.starts_with(&root_canon) {
+                        diags.push(PawnDiagnostic::error(
+                            dir.line, dir.col, col_end,
+                            codes::PP0001,
+                            format!("\"{}\" aponta para fora do workspace", dir.token),
+                        ));
+                    }
+                }
+            }
         }
     }
     diags
@@ -70,9 +127,7 @@ fn build_not_found_message(
     include_paths: &[PathBuf],
 ) -> String {
     let mut msg = format!("Include não encontrada: \"{}\"", dir.token);
-    if Path::new(&dir.token).extension().is_none() {
-        msg.push_str(&format!(" (tentou: {}.inc)", dir.token));
-    }
+    msg.push_str(&format!(" (tentou também: {}.inc)", dir.token));
     if dir.is_angle {
         if include_paths.is_empty() {
             msg.push_str(". Nenhum includePaths configurado.");
@@ -91,65 +146,53 @@ fn build_not_found_message(
     msg
 }
 
-struct CollectCtx<'a> {
-    include_paths: &'a [PathBuf],
-    out: &'a mut Vec<PathBuf>,
-    seen: &'a mut std::collections::HashSet<PathBuf>,
-    max_depth: usize,
-    max_files: usize,
-}
-
-/// Resolve todas as includes recursivamente e retorna os caminhos.
+// BFS ensures direct includes are processed before transitive ones,
+// so max_files never cuts off first-level dependencies.
 pub fn collect_included_files(
     file_path: &Path,
     include_paths: &[PathBuf],
     directives: &[IncludeDirective],
     max_depth: usize,
     max_files: usize,
-) -> Vec<PathBuf> {
-    let mut out = Vec::new();
-    let mut seen = std::collections::HashSet::new();
-    let file_dir = file_path.parent().unwrap_or(Path::new("."));
+) -> ResolvedIncludes {
+    let mut out: Vec<PathBuf> = Vec::new();
+    let mut seen: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+    let mut files: HashMap<PathBuf, IncludeEntry> = HashMap::new();
+    let file_dir = file_path.parent().unwrap_or(Path::new(".")).to_path_buf();
 
-    let mut ctx = CollectCtx { include_paths, out: &mut out, seen: &mut seen, max_depth, max_files };
-    collect_recursive(&mut ctx, directives, file_dir, 1);
-    out
-}
+    let mut queue: std::collections::VecDeque<(Vec<IncludeDirective>, PathBuf, usize)> =
+        std::collections::VecDeque::new();
+    queue.push_back((directives.to_vec(), file_dir, 1));
 
-fn collect_recursive(
-    ctx: &mut CollectCtx<'_>,
-    directives: &[IncludeDirective],
-    file_dir: &Path,
-    depth: usize,
-) {
-    if ctx.out.len() >= ctx.max_files {
-        return;
-    }
-    for dir in directives {
-        let Some(resolved) = resolve_include(dir, file_dir, ctx.include_paths) else { continue };
-        let norm = resolved.canonicalize().unwrap_or(resolved.clone());
-        if ctx.seen.contains(&norm) {
-            continue;
-        }
-        ctx.seen.insert(norm.clone());
-        ctx.out.push(resolved.clone());
+    while let Some((dirs, dir, depth)) = queue.pop_front() {
+        for directive in &dirs {
+            if out.len() >= max_files {
+                break;
+            }
+            let Some(resolved) = resolve_include(directive, &dir, include_paths) else { continue };
+            let norm = resolved.canonicalize().unwrap_or_else(|_| resolved.clone());
+            if seen.contains(&norm) {
+                continue;
+            }
+            seen.insert(norm.clone());
+            out.push(norm.clone());
 
-        if depth < ctx.max_depth {
-            // Lê e parseia o arquivo incluído para seguir suas includes
-            if let Ok(text) = std::fs::read(&resolved) {
-                let text = decode_text(&text);
-                let nested = crate::parser::parse_file(&text);
-                let nested_dir = resolved.parent().unwrap_or(Path::new("."));
-                collect_recursive(ctx, &nested.includes, nested_dir, depth + 1);
+            if depth < max_depth {
+                let entry = files.entry(norm.clone()).or_insert_with(|| {
+                    let bytes = std::fs::read(&resolved).unwrap_or_default();
+                    let text = decode_bytes(&bytes);
+                    let parsed = parse_file(&text);
+                    IncludeEntry { text, parsed }
+                });
+                let nested = entry.parsed.includes.clone();
+                let nested_dir = resolved
+                    .parent()
+                    .unwrap_or(Path::new("."))
+                    .to_path_buf();
+                queue.push_back((nested, nested_dir, depth + 1));
             }
         }
     }
-}
 
-/// Decodifica bytes como UTF-8 (com fallback para latin-1 se muitos erros).
-fn decode_text(bytes: &[u8]) -> String {
-    match std::str::from_utf8(bytes) {
-        Ok(s) => s.to_string(),
-        Err(_) => bytes.iter().map(|&b| b as char).collect(),
-    }
+    ResolvedIncludes { paths: out, files }
 }
