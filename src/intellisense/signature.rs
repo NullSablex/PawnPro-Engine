@@ -84,10 +84,8 @@ fn find_call_context(prefix: &str) -> Option<(String, usize)> {
             '\'' if !in_str => in_char = !in_char,
             _ if in_str || in_char => {}
             ')' | ']' => depth += 1,
-            '[' => {
-                if depth > 0 {
-                    depth -= 1;
-                }
+            '[' if depth > 0 => {
+                depth -= 1;
             }
             '(' => {
                 if depth == 0 {
