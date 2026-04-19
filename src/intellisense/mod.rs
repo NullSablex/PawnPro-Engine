@@ -1,11 +1,15 @@
 mod completion;
 mod codelens;
 mod hover;
+mod references;
+mod semantic_tokens;
 mod signature;
 
-pub use completion::get_completions;
+pub use completion::{get_at_completions, get_completions};
 pub use codelens::get_code_lens;
 pub use hover::get_hover;
+pub use references::get_references;
+pub use semantic_tokens::{get_semantic_tokens, semantic_tokens_legend};
 pub use signature::get_signature_help;
 
 use std::path::{Path, PathBuf};
@@ -15,16 +19,11 @@ use crate::parser::types::Symbol;
 use crate::parser::ParsedFile;
 use crate::workspace::WorkspaceState;
 
-// ─── Helpers compartilhados ───────────────────────────────────────────────────
-
-/// Extrai o identificador (palavra) na posição `col` de uma linha.
 pub(crate) fn extract_word(line: &str, col: usize) -> Option<String> {
     let chars: Vec<char> = line.chars().collect();
     let is_ident = |c: char| c.is_alphanumeric() || c == '_';
 
-    // Posiciona dentro dos limites
     let mut start = col.min(chars.len());
-    // Se col aponta para após o último char ou para um não-ident, recua um
     if start == chars.len() || !is_ident(chars[start]) {
         if start == 0 {
             return None;
@@ -47,7 +46,6 @@ pub(crate) fn extract_word(line: &str, col: usize) -> Option<String> {
     Some(chars[start..end].iter().collect())
 }
 
-/// Coleta todos os símbolos do arquivo atual + includes (transitivam., com cache).
 pub(crate) fn collect_all_symbols(
     state: &WorkspaceState,
     file_path: &Path,
@@ -55,12 +53,13 @@ pub(crate) fn collect_all_symbols(
     parsed: &ParsedFile,
 ) -> Vec<Symbol> {
     let mut all = parsed.symbols.clone();
-    let included = collect_included_files(file_path, inc_paths, &parsed.includes, 10, 200);
-    for inc_path in &included {
-        if let Some(inc_parsed) = state.get_parsed_by_path(inc_path) {
+    let resolved = collect_included_files(file_path, inc_paths, &parsed.includes, 10, 200);
+    for inc_path in &resolved.paths {
+        if let Some(entry) = resolved.files.get(inc_path) {
+            all.extend(entry.parsed.symbols.clone());
+        } else if let Some(inc_parsed) = state.get_parsed_by_path(inc_path) {
             all.extend(inc_parsed.symbols);
         }
     }
     all
 }
-

@@ -1,74 +1,89 @@
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use once_cell::sync::Lazy;
 use regex::Regex;
 
 use crate::parser::lexer::strip_line_comments;
-use crate::parser::{ParsedFile, SymbolKind};
+use crate::parser::{ParsedFile, Symbol, SymbolKind};
 
-use super::includes::collect_included_files;
+use super::includes::ResolvedIncludes;
 use super::{codes, diagnostic::PawnDiagnostic};
 
 static RX_CALL: Lazy<Regex> = Lazy::new(|| Regex::new(r"\b([A-Za-z_]\w*)\s*\(").unwrap());
 static RX_IDENT: Lazy<Regex> = Lazy::new(|| Regex::new(r"\b([A-Za-z_]\w*)\b").unwrap());
 
-/// Coleta todos os identificadores usados como chamada `Name(` em um texto.
-fn collect_call_usages(text: &str) -> HashSet<String> {
-    let mut usages = HashSet::new();
-    let lines: Vec<&str> = text.split('\n').collect();
-    let mut in_block = false;
-    for raw_line in &lines {
-        let stripped = strip_line_comments(raw_line.trim_end_matches('\r'), in_block);
-        in_block = stripped.in_block;
-        for cap in RX_CALL.captures_iter(&stripped.text) {
-            usages.insert(cap[1].to_string());
-        }
-    }
-    usages
+#[derive(Clone, Copy)]
+enum CollectMode {
+    /// Coleta chamadas `name(`, ignorando linhas de declaração de funções
+    Calls,
+    /// Coleta todos os idents, ignorando linhas de declaração de variáveis
+    AllIdents,
+    /// Coleta todos os idents, ignorando linhas com `#` (diretivas)
+    IdentsNoDeclLines,
 }
 
-/// Coleta todos os identificadores (para macros e variáveis).
-fn collect_all_idents(text: &str) -> HashSet<String> {
-    let mut usages = HashSet::new();
-    let lines: Vec<&str> = text.split('\n').collect();
+fn collect_idents(text: &str, mode: CollectMode) -> HashSet<String> {
+    let mut out = HashSet::new();
     let mut in_block = false;
-    for raw_line in &lines {
-        let stripped = strip_line_comments(raw_line.trim_end_matches('\r'), in_block);
+
+    for raw_line in text.split('\n') {
+        let raw = raw_line.trim_end_matches('\r');
+        let stripped = strip_line_comments(raw, in_block);
         in_block = stripped.in_block;
-        for cap in RX_IDENT.captures_iter(&stripped.text) {
-            usages.insert(cap[1].to_string());
+
+        let trimmed_lower = stripped.text.trim_start().to_ascii_lowercase();
+
+        let skip = match mode {
+            CollectMode::Calls => {
+                trimmed_lower.starts_with("stock ") || trimmed_lower.starts_with("stock\t")
+                    || trimmed_lower.starts_with("public ") || trimmed_lower.starts_with("public\t")
+                    || trimmed_lower.starts_with("static ") || trimmed_lower.starts_with("static\t")
+                    || trimmed_lower.starts_with("native ") || trimmed_lower.starts_with("native\t")
+                    || trimmed_lower.starts_with("forward ") || trimmed_lower.starts_with("forward\t")
+            }
+            CollectMode::AllIdents => {
+                trimmed_lower.starts_with("new ") || trimmed_lower.starts_with("new\t")
+                    || trimmed_lower.starts_with("const ") || trimmed_lower.starts_with("const\t")
+                    || ((trimmed_lower.starts_with("static ") || trimmed_lower.starts_with("static\t"))
+                        && !stripped.text.contains('('))
+            }
+            CollectMode::IdentsNoDeclLines => stripped.text.trim_start().starts_with('#'),
+        };
+
+        if skip {
+            continue;
+        }
+
+        let rx = match mode {
+            CollectMode::Calls => &*RX_CALL,
+            CollectMode::AllIdents | CollectMode::IdentsNoDeclLines => &*RX_IDENT,
+        };
+
+        for cap in rx.captures_iter(&stripped.text) {
+            out.insert(cap[1].to_string());
         }
     }
-    usages
+
+    out
 }
 
-/// Analisa símbolos não utilizados.
-///
-/// - Variáveis (`Variable`): verificadas localmente no arquivo.
-/// - Stocks/Static em `.pwn`: verificadas localmente + nos includes. Em `.inc`, suprimidas
-///   a menos que `warn_unused_in_inc = true`.
-/// - Parâmetros de native: NUNCA verificados (não são variáveis locais).
 pub fn analyze_unused(
     text: &str,
     file_path: &Path,
     parsed: &ParsedFile,
-    include_paths: &[PathBuf],
+    resolved: &ResolvedIncludes,
     warn_unused_in_inc: bool,
 ) -> Vec<PawnDiagnostic> {
     let mut diags = Vec::new();
-    let is_inc = file_path
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(|e| e.eq_ignore_ascii_case("inc"))
-        .unwrap_or(false);
+    let is_inc = has_extension(file_path, "inc");
 
-    let local_calls = collect_call_usages(text);
-    let local_idents = collect_all_idents(text);
+    let local_calls = collect_idents(text, CollectMode::Calls);
+    let local_idents = collect_idents(text, CollectMode::AllIdents);
 
-    // ── Variáveis locais ──────────────────────────────────────────────────
+    // PP0005 — variáveis não usadas (sempre, independente de ser .inc)
     for sym in parsed.symbols.iter().filter(|s| matches!(s.kind, SymbolKind::Variable)) {
-        if !is_used_as_ident(&sym.name, &local_idents, sym.line) {
+        if !local_idents.contains(&sym.name) {
             diags.push(PawnDiagnostic::unnecessary_warning(
                 sym.line, sym.col, sym.col + sym.name.len() as u32,
                 codes::PP0005,
@@ -77,7 +92,11 @@ pub fn analyze_unused(
         }
     }
 
-    // ── Stocks / Static ───────────────────────────────────────────────────
+    if is_inc && !warn_unused_in_inc {
+        return diags;
+    }
+
+    // PP0006 — stocks/statics não usados
     let stock_syms: Vec<_> = parsed
         .symbols
         .iter()
@@ -85,37 +104,7 @@ pub fn analyze_unused(
         .collect();
 
     if !stock_syms.is_empty() {
-        // Em .inc sem flag: não emite
-        if is_inc && !warn_unused_in_inc {
-            return diags;
-        }
-
-        // Verifica uso local primeiro
-        let mut used: HashSet<String> = HashSet::new();
-        for sym in &stock_syms {
-            if local_calls.contains(&sym.name) {
-                used.insert(sym.name.clone());
-            }
-        }
-
-        // Se ainda há stocks não usadas, verifica nos includes
-        if used.len() < stock_syms.len() {
-            let included = collect_included_files(file_path, include_paths, &parsed.includes, 5, 100);
-            'outer: for fp in &included {
-                if let Ok(inc_text) = std::fs::read(fp) {
-                    let inc_text = decode_text(&inc_text);
-                    let inc_calls = collect_call_usages(&inc_text);
-                    for sym in &stock_syms {
-                        if !used.contains(&sym.name) && inc_calls.contains(&sym.name) {
-                            used.insert(sym.name.clone());
-                            if used.len() == stock_syms.len() {
-                                break 'outer;
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        let used = collect_used_stocks(&stock_syms, &local_calls, &resolved.paths, resolved);
 
         for sym in &stock_syms {
             if !used.contains(&sym.name) {
@@ -128,23 +117,97 @@ pub fn analyze_unused(
         }
     }
 
+    // PP0011 — defines não usados
+    if !parsed.macro_names.is_empty() {
+        let idents_no_directives = collect_idents(text, CollectMode::IdentsNoDeclLines);
+        for sym in parsed.symbols.iter().filter(|s| matches!(s.kind, SymbolKind::Define)) {
+            if !idents_no_directives.contains(&sym.name) {
+                diags.push(PawnDiagnostic::hint(
+                    sym.line, sym.col, sym.col + sym.name.len() as u32,
+                    codes::PP0011,
+                    format!("\"{}\" definido mas não utilizado", sym.name),
+                ));
+            }
+        }
+    }
+
+    // PP0012 — includes cujos símbolos não são usados
+    for inc in &parsed.includes {
+        let Some(rp) = find_resolved_path(inc, &resolved.paths) else { continue };
+        let Some(entry) = resolved.files.get(rp) else { continue };
+
+        let exported: HashSet<String> = entry.parsed.symbols.iter()
+            .map(|s| s.name.clone())
+            .chain(entry.parsed.macro_names.iter().cloned())
+            .collect();
+
+        if exported.is_empty() { continue; }
+
+        if !exported.iter().any(|name| local_idents.contains(name)) {
+            diags.push(PawnDiagnostic::hint(
+                inc.line, inc.col, inc.col + inc.token.len() as u32,
+                codes::PP0012,
+                format!("\"{}\" incluído mas nenhum de seus símbolos é utilizado", inc.token),
+            ));
+        }
+    }
+
     diags
 }
 
-/// Verifica se um nome é usado como identificador no texto, ignorando a linha de declaração.
-fn is_used_as_ident(name: &str, idents: &HashSet<String>, decl_line: u32) -> bool {
-    // Como collect_all_idents varre o arquivo inteiro, uma variável declarada mas nunca
-    // referenciada de outra forma não estará nos idents de outras linhas.
-    // Heurística simples: se name está em idents E existem mais de 1 ocorrência
-    // (a declaração conta como 1), considera usado.
-    // Para precisão, seria necessário rastrear linha por linha — deixado para futura melhoria.
-    let _ = decl_line;
-    idents.contains(name)
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+fn has_extension(path: &Path, ext: &str) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.eq_ignore_ascii_case(ext))
+        .unwrap_or(false)
 }
 
-fn decode_text(bytes: &[u8]) -> String {
-    match std::str::from_utf8(bytes) {
-        Ok(s) => s.to_string(),
-        Err(_) => bytes.iter().map(|&b| b as char).collect(),
+fn collect_used_stocks(
+    stocks: &[&Symbol],
+    local_calls: &HashSet<String>,
+    paths: &[std::path::PathBuf],
+    resolved: &ResolvedIncludes,
+) -> HashSet<String> {
+    let mut used: HashSet<String> = stocks
+        .iter()
+        .filter(|s| local_calls.contains(&s.name))
+        .map(|s| s.name.clone())
+        .collect();
+
+    if used.len() == stocks.len() {
+        return used;
     }
+
+    'outer: for fp in paths {
+        let inc_calls = resolved.files.get(fp)
+            .map(|e| collect_idents(&e.text, CollectMode::Calls))
+            .unwrap_or_default();
+
+        for sym in stocks {
+            if !used.contains(&sym.name) && inc_calls.contains(&sym.name) {
+                used.insert(sym.name.clone());
+                if used.len() == stocks.len() {
+                    break 'outer;
+                }
+            }
+        }
+    }
+
+    used
+}
+
+fn find_resolved_path<'a>(
+    inc: &crate::parser::IncludeDirective,
+    paths: &'a [std::path::PathBuf],
+) -> Option<&'a std::path::PathBuf> {
+    paths.iter().find(|p| {
+        let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+        let token_stem = std::path::Path::new(&inc.token)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or(&inc.token);
+        stem.eq_ignore_ascii_case(token_stem) || p.to_string_lossy().contains(&*inc.token)
+    })
 }

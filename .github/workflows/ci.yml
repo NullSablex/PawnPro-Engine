@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [master, dev]
+    branches: [master]
   pull_request:
-    branches: [master, dev]
+    branches: [master]
 
 permissions: {}
 
@@ -39,3 +39,8 @@ jobs:
 
       - name: Test
         run: cargo test
+
+      # Verifica que o build de release compila sem erros
+      # (lto + strip + codegen-units=1 definidos em [profile.release] do Cargo.toml)
+      - name: Build release
+        run: cargo build --release

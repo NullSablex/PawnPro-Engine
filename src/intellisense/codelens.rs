@@ -1,16 +1,17 @@
+use std::collections::HashMap;
+
+use serde_json::json;
 use tower_lsp::lsp_types::*;
 
+use crate::parser::lexer::strip_line_comments;
 use crate::parser::types::SymbolKind;
 use crate::workspace::WorkspaceState;
 
-/// Retorna CodeLens com contagem de referências para funções no arquivo `uri`.
-/// Conta ocorrências nos documentos abertos (exceto o próprio arquivo).
 pub fn get_code_lens(state: &WorkspaceState, uri: &str) -> Vec<CodeLens> {
     let Some(parsed) = state.get_parsed(uri) else {
         return vec![];
     };
 
-    // Apenas símbolos "chamáveis" recebem CodeLens
     let func_syms: Vec<_> = parsed
         .symbols
         .iter()
@@ -18,11 +19,9 @@ pub fn get_code_lens(state: &WorkspaceState, uri: &str) -> Vec<CodeLens> {
             matches!(
                 s.kind,
                 SymbolKind::Native
-                    | SymbolKind::Forward
                     | SymbolKind::Public
                     | SymbolKind::Stock
                     | SymbolKind::Static
-                    | SymbolKind::StaticConst
             )
         })
         .collect();
@@ -31,26 +30,26 @@ pub fn get_code_lens(state: &WorkspaceState, uri: &str) -> Vec<CodeLens> {
         return vec![];
     }
 
-    // Textos de todos os documentos abertos (exceto o próprio)
-    let search_texts: Vec<String> = state
+    let maps: Vec<(HashMap<String, usize>, HashMap<String, usize>)> = state
         .open_docs
         .iter()
-        .filter(|e| e.key().as_str() != uri)
-        .map(|e| e.text.clone())
+        .map(|e| build_freq_maps(&e.text))
         .collect();
 
     func_syms
         .iter()
         .map(|sym| {
-            let refs: usize = search_texts
+            let total: usize = maps
                 .iter()
-                .map(|t| count_word(sym.name.as_str(), t))
+                .map(|(_, call_m)| call_m.get(sym.name.as_str()).copied().unwrap_or(0))
                 .sum();
+
+            let refs = total.saturating_sub(1);
 
             let title = match refs {
                 0 => "0 referências".to_string(),
                 1 => "1 referência".to_string(),
-                n => format!("{} referências", n),
+                n => format!("{n} referências"),
             };
 
             let range = Range {
@@ -61,38 +60,59 @@ pub fn get_code_lens(state: &WorkspaceState, uri: &str) -> Vec<CodeLens> {
                 },
             };
 
-            CodeLens {
-                range,
-                command: Some(Command {
+            let command = if refs > 0 {
+                Some(Command {
                     title,
-                    command: String::new(), // lens de leitura — sem ação
+                    command: "pawnpro.findReferences".to_string(),
+                    arguments: Some(vec![
+                        json!(uri),
+                        json!(sym.line),
+                        json!(sym.col),
+                    ]),
+                })
+            } else {
+                Some(Command {
+                    title,
+                    command: String::new(),
                     arguments: None,
-                }),
-                data: None,
-            }
+                })
+            };
+
+            CodeLens { range, command, data: None }
         })
         .collect()
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-/// Conta ocorrências de `name` como palavra inteira (word boundary) em `text`.
-fn count_word(name: &str, text: &str) -> usize {
-    let nb = name.as_bytes();
-    let tb = text.as_bytes();
-    if tb.len() < nb.len() {
-        return 0;
-    }
+fn build_freq_maps(text: &str) -> (HashMap<String, usize>, HashMap<String, usize>) {
+    let mut word_map: HashMap<String, usize> = HashMap::new();
+    let mut call_map: HashMap<String, usize> = HashMap::new();
     let is_ident = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
-    let mut count = 0usize;
-    for i in 0..=(tb.len() - nb.len()) {
-        if &tb[i..i + nb.len()] == nb {
-            let before_ok = i == 0 || !is_ident(tb[i - 1]);
-            let after_ok = i + nb.len() >= tb.len() || !is_ident(tb[i + nb.len()]);
-            if before_ok && after_ok {
-                count += 1;
+
+    let mut in_block = false;
+    for raw_line in text.lines() {
+        let stripped = strip_line_comments(raw_line.trim_end_matches('\r'), in_block);
+        in_block = stripped.in_block;
+        let bytes = stripped.text.as_bytes();
+        let mut i = 0;
+        while i < bytes.len() {
+            if is_ident(bytes[i]) {
+                let start = i;
+                while i < bytes.len() && is_ident(bytes[i]) {
+                    i += 1;
+                }
+                let word = &stripped.text[start..i];
+                *word_map.entry(word.to_string()).or_insert(0) += 1;
+                let mut j = i;
+                while j < bytes.len() && (bytes[j] == b' ' || bytes[j] == b'\t') {
+                    j += 1;
+                }
+                if j < bytes.len() && bytes[j] == b'(' {
+                    *call_map.entry(word.to_string()).or_insert(0) += 1;
+                }
+            } else {
+                i += 1;
             }
         }
     }
-    count
+    (word_map, call_map)
 }

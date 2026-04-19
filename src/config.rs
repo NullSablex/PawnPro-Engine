@@ -2,25 +2,28 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
-/// Subconjunto do .pawnpro/config.json relevante para o motor.
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
 pub struct EngineConfig {
-    /// Diretórios de includes; suporta ${workspaceFolder}.
     pub include_paths: Vec<String>,
-    /// Configurações de análise.
     pub analysis: AnalysisConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
 pub struct AnalysisConfig {
-    /// Quando true, emite warnings de stock não usada mesmo em .inc (para plugin makers).
     pub warn_unused_in_inc: bool,
+    pub sdk: SdkConfig,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SdkConfig {
+    pub platform: String,
+    pub file_path: String,
 }
 
 impl EngineConfig {
-    /// Carrega o config do projeto (`.pawnpro/config.json`) e/ou global (`~/.pawnpro/config.json`).
     pub fn load(workspace_root: Option<&Path>) -> Self {
         let mut cfg = Self::load_global().unwrap_or_default();
 
@@ -29,6 +32,11 @@ impl EngineConfig {
         {
             cfg.merge(project_cfg);
         }
+
+        if cfg.include_paths.is_empty() {
+            cfg.include_paths = vec!["${workspaceFolder}/pawno/include".to_string()];
+        }
+
         cfg
     }
 
@@ -51,7 +59,6 @@ impl EngineConfig {
         }
     }
 
-    /// Resolve include_paths expandindo ${workspaceFolder}.
     pub fn resolved_include_paths(&self, workspace_root: Option<&Path>) -> Vec<PathBuf> {
         self.include_paths
             .iter()

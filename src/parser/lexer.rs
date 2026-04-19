@@ -1,3 +1,44 @@
+/// Atualiza a profundidade de chaves `{}` para uma linha, ignorando literais string/char.
+pub fn update_brace_depth(line: &str, mut depth: i32) -> i32 {
+    let bytes = line.as_bytes();
+    let mut in_str = false;
+    let mut in_char = false;
+    let mut i = 0;
+    while i < bytes.len() {
+        let ch = bytes[i];
+        let prev = if i > 0 { bytes[i - 1] } else { 0 };
+        if ch == b'"' && !in_char && prev != b'\\' {
+            in_str = !in_str;
+        } else if ch == b'\'' && !in_str && prev != b'\\' {
+            in_char = !in_char;
+        } else if !in_str && !in_char {
+            if ch == b'{' { depth += 1; }
+            else if ch == b'}' { depth = (depth - 1).max(0); }
+        }
+        i += 1;
+    }
+    depth
+}
+
+/// Decodifica bytes como UTF-8, com fallback latin-1 para arquivos Windows-1252.
+pub fn decode_bytes(bytes: &[u8]) -> String {
+    match std::str::from_utf8(bytes) {
+        Ok(s) => s.to_string(),
+        Err(_) => bytes.iter().map(|&b| b as char).collect(),
+    }
+}
+
+/// Retorna `true` se a linha contém `@DEPRECATED` dentro de um comentário `//` ou `/* */`.
+pub fn has_inline_deprecated(raw_line: &str) -> bool {
+    if let Some(p) = raw_line.find("//")
+        && raw_line[p..].contains("@DEPRECATED") { return true; }
+    if let Some(p) = raw_line.find("/*") {
+        let end = raw_line[p..].find("*/").map(|q| p + q).unwrap_or(raw_line.len());
+        if raw_line[p..end].contains("@DEPRECATED") { return true; }
+    }
+    false
+}
+
 /// Resultado do strip de comentários em uma linha.
 #[derive(Debug)]
 pub struct StripResult {
@@ -77,24 +118,15 @@ pub fn strip_line_comments(line: &str, in_block: bool) -> StripResult {
     }
 
     StripResult {
-        // SAFETY: apenas bytes ASCII são manipulados, strings UTF-8 multi-byte são copiadas
-        // intactas (nunca divididas em strings/chars fora de comentários).
+        // SAFETY: `out` é UTF-8 válido porque:
+        //   1. Dentro de string/char literals, bytes são copiados 1:1 do input (já UTF-8 válido).
+        //   2. Dentro de comentários, cada byte é substituído por b' ' (0x20, ASCII válido).
+        //   3. Fora de literais/comentários, bytes são copiados 1:1.
+        // Nenhum byte multi-byte UTF-8 é dividido: substituições só ocorrem dentro de
+        // comentários onde não há literais de texto — portanto a sequência nunca é cortada.
         text: unsafe { String::from_utf8_unchecked(out) },
         in_block,
     }
-}
-
-/// Constrói tabela de offsets de início de cada linha (0-based byte offset).
-pub fn build_line_offsets(text: &str) -> Vec<u32> {
-    let mut offsets = vec![0u32];
-    let mut offset: u32 = 0;
-    for ch in text.chars() {
-        offset += ch.len_utf8() as u32;
-        if ch == '\n' {
-            offsets.push(offset);
-        }
-    }
-    offsets
 }
 
 #[cfg(test)]

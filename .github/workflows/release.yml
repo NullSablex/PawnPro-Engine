@@ -106,6 +106,13 @@ jobs:
           path: dist/
           merge-multiple: true
 
+      - name: Generate SHA-256 checksums
+        run: |
+          cd dist
+          sha256sum * > checksums.sha256
+          echo "--- checksums ---"
+          cat checksums.sha256
+
       - name: Create Release and upload binaries
         uses: softprops/action-gh-release@v2
         with:

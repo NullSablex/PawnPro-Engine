@@ -4,8 +4,6 @@ use crate::workspace::WorkspaceState;
 
 use super::collect_all_symbols;
 
-/// Retorna SignatureHelp para a posição `position` no arquivo `uri`.
-/// Acionado quando o usuário digita `(` ou `,`.
 pub fn get_signature_help(
     state: &WorkspaceState,
     uri: &str,
@@ -17,16 +15,17 @@ pub fn get_signature_help(
     let parsed = state.get_parsed(uri)?;
 
     let lines: Vec<&str> = text.lines().collect();
-    let line_idx = position.line as usize;
-    let col = position.character as usize;
 
+    let line_idx = position.line as usize;
     if line_idx >= lines.len() {
         return None;
     }
     let line = lines[line_idx];
-    let prefix = &line[..col.min(line.len())];
 
-    // Descobre qual função está sendo chamada e qual o parâmetro ativo
+    // character is u32 from the LSP client; clamp to line byte length before cast
+    let col = (position.character as usize).min(line.len());
+    let prefix = &line[..col];
+
     let (func_name, active_param) = find_call_context(prefix)?;
 
     let all_syms = collect_all_symbols(state, &file_path, &inc_paths, &parsed);
@@ -34,7 +33,6 @@ pub fn get_signature_help(
         .iter()
         .find(|s| s.name == func_name && s.signature.is_some())?;
 
-    // Monta ParameterInformation para cada parâmetro
     let param_infos: Vec<ParameterInformation> = sym
         .params
         .iter()
@@ -71,10 +69,6 @@ pub fn get_signature_help(
     })
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-/// Percorre o prefixo de trás para frente, localizando a chamada de função ativa
-/// e contando vírgulas para determinar o índice do parâmetro atual.
 fn find_call_context(prefix: &str) -> Option<(String, usize)> {
     let chars: Vec<char> = prefix.chars().collect();
     let mut depth = 0i32;
@@ -85,16 +79,13 @@ fn find_call_context(prefix: &str) -> Option<(String, usize)> {
     let mut i = chars.len() as isize - 1;
     while i >= 0 {
         let ch = chars[i as usize];
-        // Rastreamento básico de strings/chars (sem escape multi-linha)
         match ch {
             '"' if !in_char => in_str = !in_str,
             '\'' if !in_str => in_char = !in_char,
             _ if in_str || in_char => {}
             ')' | ']' => depth += 1,
-            '[' => {
-                if depth > 0 {
-                    depth -= 1;
-                }
+            '[' if depth > 0 => {
+                depth -= 1;
             }
             '(' => {
                 if depth == 0 {
@@ -111,7 +102,6 @@ fn find_call_context(prefix: &str) -> Option<(String, usize)> {
     None
 }
 
-/// Extrai o nome do identificador imediatamente antes de `paren_pos`.
 fn name_before(chars: &[char], paren_pos: usize) -> Option<String> {
     if paren_pos == 0 {
         return None;

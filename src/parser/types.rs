@@ -37,13 +37,15 @@ pub struct Symbol {
     pub col: u32,
 }
 
-/// Diretiva #include em um arquivo.
+/// Diretiva #include / #tryinclude em um arquivo.
 #[derive(Debug, Clone)]
 pub struct IncludeDirective {
     /// Token como escrito: "a_samp" ou "../utils"
     pub token: String,
-    /// true para <token>, false para "token"
+    /// true para `<token>`, false para `"token"`
     pub is_angle: bool,
+    /// true para `#tryinclude` — ausência do arquivo não é erro
+    pub is_try: bool,
     pub line: u32,
     pub col: u32,
 }
@@ -57,4 +59,11 @@ pub struct ParsedFile {
     pub macro_names: Vec<String>,
     /// Macros marcadas como depreciadas.
     pub deprecated_macros: Vec<String>,
+    /// Prefixos de macro que geram funções (forward/public), ex: ["BPR", "CMD", "CALLBACK"].
+    /// Detectado dinamicamente de `#define PREFIX::%0(...)` ou `#define PREFIX:%0(...)`
+    /// cujo corpo contém `forward` ou `public`.
+    pub func_macro_prefixes: Vec<String>,
+    /// Alias de namespace: "DOF2" → "DOF2_", "BustAim" → "BS_", etc.
+    /// Detectado de `#define NAMESPACE:: PREFIX_` (linha com barra-invertida ou inline).
+    pub namespace_aliases: std::collections::HashMap<String, String>,
 }
