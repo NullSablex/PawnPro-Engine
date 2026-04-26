@@ -75,13 +75,20 @@ fn format_symbol(sym: &Symbol) -> Hover {
         SymbolKind::Public => "public",
         SymbolKind::Stock => "stock",
         SymbolKind::Static => "static",
+        SymbolKind::Plain => "",
         SymbolKind::StaticConst => "static const",
         SymbolKind::Define => "#define",
         SymbolKind::Variable => "//",
     };
 
     let mut md = if let Some(sig) = &sym.signature {
-        format!("```pawn\n{} {}\n```", kw, sig)
+        if kw.is_empty() {
+            format!("```pawn\n{}\n```", sig)
+        } else {
+            format!("```pawn\n{} {}\n```", kw, sig)
+        }
+    } else if kw.is_empty() {
+        format!("```pawn\n{}\n```", sym.name)
     } else {
         format!("```pawn\n{} {}\n```", kw, sym.name)
     };

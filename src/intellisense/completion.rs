@@ -63,7 +63,7 @@ fn build_symbol_item(sym: &crate::parser::types::Symbol) -> CompletionItem {
     use crate::parser::types::SymbolKind::*;
 
     let kind = Some(match sym.kind {
-        Native | Forward | Public | Stock | Static => CompletionItemKind::FUNCTION,
+        Native | Forward | Public | Stock | Static | Plain => CompletionItemKind::FUNCTION,
         StaticConst | Define => CompletionItemKind::CONSTANT,
         Variable => CompletionItemKind::VARIABLE,
     });

@@ -6,6 +6,9 @@ pub enum SymbolKind {
     Public,
     Stock,
     Static,
+    /// Função sem keyword — tratada pelo compilador como "global não-stock":
+    /// não exportada no AMX, não isenta de warning 203 se não chamada internamente.
+    Plain,
     StaticConst,
     Define,
     Variable, // new / static (variável) / const

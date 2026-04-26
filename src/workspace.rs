@@ -121,7 +121,7 @@ impl WorkspaceState {
         let Some(file_path) = uri_to_path(uri) else { return vec![] };
         let parsed = parse_file(&text);
         let inc_paths = self.include_paths();
-        let resolved = collect_included_files(&file_path, &inc_paths, &parsed.includes, 8, 500);
+        let resolved = collect_included_files(&file_path, &inc_paths, &parsed.includes, 16, 1000);
 
         let mut diags = Vec::new();
         diags.extend(includes::analyze_includes(&parsed.includes, &file_path, &inc_paths, self.workspace_root.as_deref()));
@@ -193,7 +193,7 @@ fn parse_sdk(path: &PathBuf) -> Option<ParsedFile> {
     // Resolve transitive includes so SDK symbols from re-exported files are collected.
     // open.mp.inc itself has almost no symbols — they live in _open_mp and sub-includes.
     let inc_paths: Vec<PathBuf> = path.parent().map(|p| vec![p.to_path_buf()]).unwrap_or_default();
-    let resolved = crate::analyzer::includes::collect_included_files(path, &inc_paths, &root.includes, 8, 500);
+    let resolved = crate::analyzer::includes::collect_included_files(path, &inc_paths, &root.includes, 16, 1000);
 
     for inc_path in &resolved.paths {
         if let Some(entry) = resolved.files.get(inc_path) {

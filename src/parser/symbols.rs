@@ -90,9 +90,9 @@ static RX_FUNC_OPEN: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"^\s*((?:(?:public|stock|static|native|forward)\s+)*)?(?:[A-Za-z_]\w*:)?\s*((?:[A-Za-z_]\w*::)*)(?:[A-Za-z_]\w*:)?\s*([A-Za-z_]\w*)\s*\(([^)]*)$").unwrap()
 });
 
-// enum [Name] [(opts)] [{]
+// enum [Tag:] [Name] [(opts)] [{] — grupo 1: nome opcional do enum
 static RX_ENUM: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"^\s*enum\b").unwrap());
+    Lazy::new(|| Regex::new(r"^\s*enum\s+(?:[A-Za-z_]\w*:)?([A-Za-z_]\w*)").unwrap());
 
 // Membro de enum: [Tag:]Name (dentro do corpo)
 static RX_ENUM_MEMBER: Lazy<Regex> =
@@ -510,8 +510,20 @@ pub fn parse_file(text: &str) -> ParsedFile {
                 continue;
             }
 
-            // enum — captura membros como StaticConst
-            if RX_ENUM.is_match(line) {
+            // enum — captura nome (como StaticConst) e membros
+            if let Some(enum_cap) = RX_ENUM.captures(line) {
+                // Registra o nome do enum como símbolo StaticConst (usado como tag/tipo)
+                let enum_name = enum_cap.get(1).map(|m| m.as_str()).unwrap_or("");
+                if !enum_name.is_empty() && !RESERVED.contains(enum_name) {
+                    let col = raw_line.find(enum_name).unwrap_or(0) as u32;
+                    result.symbols.push(Symbol {
+                        name: enum_name.to_string(),
+                        kind: SymbolKind::StaticConst,
+                        signature: None, params: vec![],
+                        deprecated, doc: extract_doc(&raw_lines, line_idx),
+                        line: line_idx as u32, col,
+                    });
+                }
                 // Enum numa única linha: enum { A, B, C } ou enum Name { A, B }
                 if let Some(open) = line.find('{') {
                     let body_start = open + 1;
@@ -701,18 +713,16 @@ pub fn parse_file(text: &str) -> ParsedFile {
 
             // Funções sem keyword / com namespace (fallback — após todos os padrões keyword)
             if let Some(cap) = RX_PLAIN_FUNC.captures(line) {
-                let ns_raw = cap.get(1).map(|m| m.as_str()).unwrap_or(""); // ex: "BPLR::"
+                let _ns_raw = cap.get(1).map(|m| m.as_str()).unwrap_or(""); // ex: "BPLR::"
                 let name = cap[2].to_string();
                 if !RESERVED.contains(name.as_str()) {
                     let params_raw = cap.get(3).map(|m| m.as_str()).unwrap_or("");
                     let col = raw_line.find(name.as_str()).unwrap_or(0) as u32;
-                    // Se o namespace é um prefixo gerador de função → kind Public
-                    let ns_key = ns_raw.trim_end_matches(':');
-                    let kind = if !ns_key.is_empty() && result.func_macro_prefixes.contains(&ns_key.to_string()) {
-                        SymbolKind::Public
-                    } else {
-                        SymbolKind::Stock
-                    };
+                    // Funções sem keyword: o compilador as trata como "global não-stock"
+                    // (usage=uDEFINE apenas, sem uSTOCK). Para o LSP, mapeamos para Public
+                    // para que PP0006 não seja emitido — callbacks externos (ex: OnPlayerConnect
+                    // sem `public`) nunca teriam chamada interna e seriam falsos positivos.
+                    let kind = SymbolKind::Plain;
                     if line.contains('{') {
                         push_func(&mut result, &raw_lines, raw_line, line_idx, name, params_raw, kind, deprecated);
                     } else {
@@ -738,7 +748,9 @@ pub fn parse_file(text: &str) -> ParsedFile {
                         else if keywords.contains("native") { SymbolKind::Native }
                         else if keywords.contains("forward") { SymbolKind::Forward }
                         else if keywords.contains("static") { SymbolKind::Static }
-                        else { SymbolKind::Stock };
+                        else if keywords.contains("stock") { SymbolKind::Stock }
+                        // Sem keyword: global não-stock
+                        else { SymbolKind::Plain };
                     let namespace_raw = cap.get(2).map(|m| m.as_str()).unwrap_or("");
                     let effective_name = if !namespace_raw.is_empty() {
                         let ns = namespace_raw.trim_end_matches(':');
@@ -912,6 +924,21 @@ mod tests {
         assert!(f.symbols.iter().any(|s| s.name == "TransportX"));
         assert!(f.symbols.iter().any(|s| s.name == "bombax"));
         assert!(f.symbols.iter().any(|s| s.name == "ativo"));
+    }
+
+    #[test]
+    fn parses_enum_name() {
+        let src = "enum dItEnum\n{\n    ObjtID,\n    droptTimer\n};";
+        let f = parse_file(src);
+        // O nome do enum deve ser registrado como StaticConst (usado como tag/tipo)
+        assert!(f.symbols.iter().any(|s| s.name == "dItEnum" && matches!(s.kind, SymbolKind::StaticConst)));
+    }
+
+    #[test]
+    fn parses_enum_name_with_tag() {
+        let src = "enum E_ZONES: { E_ZONE_ID, E_ZONE_NAME }";
+        let f = parse_file(src);
+        assert!(f.symbols.iter().any(|s| s.name == "E_ZONES" && matches!(s.kind, SymbolKind::StaticConst)));
     }
 
     #[test]

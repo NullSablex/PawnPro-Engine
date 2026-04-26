@@ -83,6 +83,7 @@ pub fn analyze_unused(
 
     // PP0005 — variáveis não usadas (sempre, independente de ser .inc)
     for sym in parsed.symbols.iter().filter(|s| matches!(s.kind, SymbolKind::Variable)) {
+        if sym.name.starts_with('_') { continue; }
         if !local_idents.contains(&sym.name) {
             diags.push(PawnDiagnostic::unnecessary_warning(
                 sym.line, sym.col, sym.col + sym.name.len() as u32,
@@ -107,6 +108,7 @@ pub fn analyze_unused(
         let used = collect_used_stocks(&stock_syms, &local_calls, &resolved.paths, resolved);
 
         for sym in &stock_syms {
+            if sym.name.starts_with('_') { continue; }
             if !used.contains(&sym.name) {
                 diags.push(PawnDiagnostic::unnecessary_warning(
                     sym.line, sym.col, sym.col + sym.name.len() as u32,
@@ -121,7 +123,11 @@ pub fn analyze_unused(
     if !parsed.macro_names.is_empty() {
         let idents_no_directives = collect_idents(text, CollectMode::IdentsNoDeclLines);
         for sym in parsed.symbols.iter().filter(|s| matches!(s.kind, SymbolKind::Define)) {
-            if !idents_no_directives.contains(&sym.name) {
+            if sym.name.starts_with('_') { continue; }
+            // Macros com parâmetros são chamadas como funções: checar em local_calls também
+            let used_as_ident = idents_no_directives.contains(&sym.name);
+            let used_as_call = local_calls.contains(&sym.name);
+            if !used_as_ident && !used_as_call {
                 diags.push(PawnDiagnostic::hint(
                     sym.line, sym.col, sym.col + sym.name.len() as u32,
                     codes::PP0011,

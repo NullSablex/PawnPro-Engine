@@ -14,6 +14,13 @@ static RX_CALL: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"\b(?:([A-Za-z_]\w*)::)?([A-Za-z_]\w*)\s*\(").unwrap()
 });
 
+// Limite de caracteres do compilador real (sNAMEMAX = 31)
+const SNAME_MAX: usize = 31;
+
+fn truncate_name(name: &str) -> &str {
+    if name.len() <= SNAME_MAX { name } else { &name[..SNAME_MAX] }
+}
+
 static RESERVED: Lazy<HashSet<&'static str>> = Lazy::new(|| {
     [
         "if", "else", "for", "while", "do", "switch", "case", "return",
@@ -80,28 +87,28 @@ pub fn analyze_undefined(
     for p in &sources {
         for sym in &p.symbols {
             if !matches!(sym.kind, SymbolKind::Variable) {
-                known.insert(sym.name.clone());
+                known.insert(truncate_name(&sym.name).to_string());
             }
         }
         for name in &p.macro_names {
-            known.insert(name.clone());
+            known.insert(truncate_name(name).to_string());
         }
         for prefix in &p.func_macro_prefixes {
-            func_prefixes.insert(prefix.clone());
+            func_prefixes.insert(truncate_name(prefix).to_string());
         }
     }
     for fp in &resolved.paths {
         if let Some(entry) = resolved.files.get(fp) {
             for sym in &entry.parsed.symbols {
                 if !matches!(sym.kind, SymbolKind::Variable) {
-                    known.insert(sym.name.clone());
+                    known.insert(truncate_name(&sym.name).to_string());
                 }
             }
             for name in &entry.parsed.macro_names {
-                known.insert(name.clone());
+                known.insert(truncate_name(name).to_string());
             }
             for prefix in &entry.parsed.func_macro_prefixes {
-                func_prefixes.insert(prefix.clone());
+                func_prefixes.insert(truncate_name(prefix).to_string());
             }
         }
     }
@@ -125,13 +132,17 @@ pub fn analyze_undefined(
             let name = cap.get(2).map(|m| m.as_str()).unwrap_or("");
             if name.is_empty() { continue; }
 
-            if RESERVED.contains(name) || known.contains(name) {
+            // Aplica truncagem igual ao compilador real (sNAMEMAX=31)
+            let name_trunc = truncate_name(name);
+
+            if RESERVED.contains(name_trunc) || known.contains(name_trunc) {
                 continue;
             }
 
             if let Some(ns) = namespace {
-                let expanded = format!("{}_{}", ns, name);
-                if known.contains(expanded.as_str()) || known.contains(ns) || func_prefixes.contains(ns) {
+                let ns_trunc = truncate_name(ns);
+                let expanded = format!("{}_{}", ns_trunc, name_trunc);
+                if known.contains(expanded.as_str()) || known.contains(ns_trunc) || func_prefixes.contains(ns_trunc) {
                     continue;
                 }
                 continue; // unknown namespace — macro may use other patterns

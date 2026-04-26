@@ -45,29 +45,34 @@ pub fn resolve_include(
     None
 }
 
+// Extensions tried in order, mirroring the real compiler (sc2.c plungequalifiedfile):
+// exact path first, then .inc, .p, .pawn, .pwn
+static EXTENSIONS: &[&str] = &["", ".inc", ".p", ".pawn", ".pwn"];
+
 // On Linux, performs a case-insensitive directory scan when the exact path fails,
 // covering mismatched casing like `evf.inc` vs `EVF.inc`.
 fn try_resolve(path: PathBuf) -> Option<PathBuf> {
-    if path.exists() {
-        return Some(path);
-    }
-    let with_inc = PathBuf::from(format!("{}.inc", path.to_string_lossy()));
-    if with_inc.exists() {
-        return Some(with_inc);
-    }
+    let base = path.to_string_lossy();
 
-    #[cfg(not(target_os = "windows"))]
-    {
-        let candidates = [&path, &with_inc];
-        for candidate in candidates {
-            if let (Some(parent), Some(file_name)) = (candidate.parent(), candidate.file_name()) {
-                let needle = file_name.to_string_lossy().to_ascii_lowercase();
-                if let Ok(entries) = std::fs::read_dir(parent) {
-                    for entry in entries.flatten() {
-                        let entry_name = entry.file_name();
-                        if entry_name.to_string_lossy().to_ascii_lowercase() == needle {
-                            return Some(entry.path());
-                        }
+    for ext in EXTENSIONS {
+        let candidate = if ext.is_empty() {
+            path.clone()
+        } else {
+            PathBuf::from(format!("{}{}", base, ext))
+        };
+
+        if candidate.exists() {
+            return Some(candidate);
+        }
+
+        // Case-insensitive fallback on non-Windows (Linux/macOS)
+        #[cfg(not(target_os = "windows"))]
+        if let (Some(parent), Some(file_name)) = (candidate.parent(), candidate.file_name()) {
+            let needle = file_name.to_string_lossy().to_ascii_lowercase();
+            if let Ok(entries) = std::fs::read_dir(parent) {
+                for entry in entries.flatten() {
+                    if entry.file_name().to_string_lossy().to_ascii_lowercase() == needle {
+                        return Some(entry.path());
                     }
                 }
             }
@@ -102,19 +107,11 @@ pub fn analyze_includes(
                     diags.push(PawnDiagnostic::error(dir.line, dir.col, col_end, codes::PP0001, msg));
                 }
             }
-            Some(resolved) => {
-                // Sinaliza apenas se o caminho resolvido escapa o workspace root
-                if let Some(root) = workspace_root {
-                    let canon = resolved.canonicalize().unwrap_or_else(|_| resolved.clone());
-                    let root_canon = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
-                    if !canon.starts_with(&root_canon) {
-                        diags.push(PawnDiagnostic::error(
-                            dir.line, dir.col, col_end,
-                            codes::PP0001,
-                            format!("\"{}\" aponta para fora do workspace", dir.token),
-                        ));
-                    }
-                }
+            Some(_resolved) => {
+                // Include resolvida com sucesso — sem diagnóstico.
+                // Includes de sistema (qawno/include, pawno/include) ficam fora do
+                // workspace por design; não emitir erro nesses casos.
+                let _ = workspace_root; // parâmetro mantido para compatibilidade futura
             }
         }
     }

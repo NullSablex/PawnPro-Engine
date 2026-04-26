@@ -22,6 +22,7 @@ pub fn get_code_lens(state: &WorkspaceState, uri: &str) -> Vec<CodeLens> {
                     | SymbolKind::Public
                     | SymbolKind::Stock
                     | SymbolKind::Static
+                    | SymbolKind::Plain
             )
         })
         .collect();

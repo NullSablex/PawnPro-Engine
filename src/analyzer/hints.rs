@@ -16,7 +16,7 @@ pub fn analyze_hints(text: &str, symbols: &[Symbol]) -> Vec<PawnDiagnostic> {
     let funcs: Vec<&Symbol> = symbols
         .iter()
         .filter(|s| {
-            matches!(s.kind, SymbolKind::Public | SymbolKind::Stock | SymbolKind::Static)
+            matches!(s.kind, SymbolKind::Public | SymbolKind::Stock | SymbolKind::Static | SymbolKind::Plain)
                 && !s.params.is_empty()
         })
         .collect();
