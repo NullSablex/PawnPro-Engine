@@ -65,12 +65,13 @@ pub fn analyze_undefined(
     resolved: &ResolvedIncludes,
     sdk_parsed: Option<&ParsedFile>,
 ) -> Vec<PawnDiagnostic> {
-    let is_inc = file_path
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(|e| e.eq_ignore_ascii_case("inc"))
-        .unwrap_or(false);
-    if is_inc {
+    // PP0010 só faz sentido em compilation units (.pwn).
+    // .inc, .p, .pawn são include files — nunca compilados diretamente.
+    let is_include = matches!(
+        file_path.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase()).as_deref(),
+        Some("inc") | Some("p") | Some("pawn")
+    );
+    if is_include {
         return vec![];
     }
 

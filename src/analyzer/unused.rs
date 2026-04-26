@@ -77,7 +77,7 @@ pub fn analyze_unused(
     workspace_root: Option<&Path>,
 ) -> Vec<PawnDiagnostic> {
     let mut diags = Vec::new();
-    let is_inc = has_extension(file_path, "inc");
+    let is_inc = is_include_file(file_path);
 
     let local_calls = collect_idents(text, CollectMode::Calls);
     let local_idents = collect_idents(text, CollectMode::AllIdents);
@@ -182,11 +182,13 @@ pub fn analyze_unused(
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-fn has_extension(path: &Path, ext: &str) -> bool {
-    path.extension()
-        .and_then(|e| e.to_str())
-        .map(|e| e.eq_ignore_ascii_case(ext))
-        .unwrap_or(false)
+/// Retorna true para qualquer extensão que o compilador trata como include file:
+/// .inc, .p, .pawn — nunca compilados diretamente, sempre incluídos por um .pwn.
+fn is_include_file(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase()).as_deref(),
+        Some("inc") | Some("p") | Some("pawn")
+    )
 }
 
 fn workspace_files<'a>(root: &'a Path, exclude: &'a Path) -> impl Iterator<Item = std::path::PathBuf> + 'a {
@@ -199,7 +201,7 @@ fn workspace_files<'a>(root: &'a Path, exclude: &'a Path) -> impl Iterator<Item 
                 let p = e.path();
                 p != exclude && matches!(
                     p.extension().and_then(|x| x.to_str()),
-                    Some("pwn") | Some("inc")
+                    Some("pwn") | Some("inc") | Some("p") | Some("pawn")
                 )
             }
         })
