@@ -13,6 +13,7 @@ pub struct EngineConfig {
 #[serde(rename_all = "camelCase", default)]
 pub struct AnalysisConfig {
     pub warn_unused_in_inc: bool,
+    pub suppress_diagnostics_in_inc: bool,
     pub sdk: SdkConfig,
 }
 
@@ -56,6 +57,9 @@ impl EngineConfig {
         }
         if other.analysis.warn_unused_in_inc {
             self.analysis.warn_unused_in_inc = true;
+        }
+        if other.analysis.suppress_diagnostics_in_inc {
+            self.analysis.suppress_diagnostics_in_inc = true;
         }
     }
 

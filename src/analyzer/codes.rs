@@ -12,3 +12,6 @@ pub const PP0010: &str = "PP0010"; // Símbolo chamado não declarado
 pub const PP0011: &str = "PP0011"; // #define declarado mas não utilizado
 pub const PP0012: &str = "PP0012"; // #include sem símbolos utilizados
 pub const PP0013: &str = "PP0013"; // #tryinclude não resolvido (aviso informativo)
+pub const PP0014: &str = "PP0014"; // Native declarada mas nunca chamada
+pub const PP0015: &str = "PP0015"; // Forward declarado mas nunca chamado
+pub const PP0016: &str = "PP0016"; // Função plain (sem keyword) declarada mas nunca chamada

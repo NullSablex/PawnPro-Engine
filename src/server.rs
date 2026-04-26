@@ -101,6 +101,9 @@ impl LanguageServer for PawnProServer {
         let opt_warn_unused: Option<bool> = init_opts
             .and_then(|v| v.get("warnUnusedInInc"))
             .and_then(|v| v.as_bool());
+        let opt_suppress_in_inc: Option<bool> = init_opts
+            .and_then(|v| v.get("suppressDiagnosticsInInc"))
+            .and_then(|v| v.as_bool());
         let opt_sdk_file: Option<String> = init_opts
             .and_then(|v| v.get("sdkFilePath"))
             .and_then(|v| v.as_str())
@@ -121,6 +124,9 @@ impl LanguageServer for PawnProServer {
             }
             if let Some(warn) = opt_warn_unused {
                 state.config.analysis.warn_unused_in_inc = warn;
+            }
+            if let Some(suppress) = opt_suppress_in_inc {
+                state.config.analysis.suppress_diagnostics_in_inc = suppress;
             }
             if let Some(sdk) = opt_sdk_file {
                 state.set_sdk_file(PathBuf::from(sdk));
@@ -163,6 +169,8 @@ impl LanguageServer for PawnProServer {
                         },
                     ),
                 ),
+                document_formatting_provider: Some(OneOf::Left(true)),
+                document_range_formatting_provider: Some(OneOf::Left(true)),
                 workspace: Some(WorkspaceServerCapabilities {
                     workspace_folders: None,
                     file_operations: None,
@@ -195,6 +203,9 @@ impl LanguageServer for PawnProServer {
         let opt_warn_unused: Option<bool> = settings
             .get("warnUnusedInInc")
             .and_then(|v| v.as_bool());
+        let opt_suppress_in_inc: Option<bool> = settings
+            .get("suppressDiagnosticsInInc")
+            .and_then(|v| v.as_bool());
         let opt_sdk_file: Option<Option<PathBuf>> = settings
             .get("sdkFilePath")
             .and_then(|v| v.as_str())
@@ -223,6 +234,11 @@ impl LanguageServer for PawnProServer {
             if let Some(warn) = opt_warn_unused
                 && state.config.analysis.warn_unused_in_inc != warn {
                 state.config.analysis.warn_unused_in_inc = warn;
+                changed = true;
+            }
+            if let Some(suppress) = opt_suppress_in_inc
+                && state.config.analysis.suppress_diagnostics_in_inc != suppress {
+                state.config.analysis.suppress_diagnostics_in_inc = suppress;
                 changed = true;
             }
             if let Some(sdk_path) = opt_sdk_file {
@@ -344,12 +360,13 @@ impl LanguageServer for PawnProServer {
         }
 
         let uri = params.text_document_position.text_document.uri;
+        let position = params.text_document_position.position;
         let state = Arc::clone(&self.state);
         let uri_str = uri.to_string();
 
         let items = tokio::task::spawn_blocking(move || {
             let state = state.blocking_read();
-            intellisense::get_completions(&state, &uri_str)
+            intellisense::get_completions(&state, &uri_str, position)
         })
         .await
         .unwrap_or_default();
@@ -428,5 +445,40 @@ impl LanguageServer for PawnProServer {
         } else {
             Ok(Some(lenses))
         }
+    }
+
+    async fn formatting(&self, params: DocumentFormattingParams) -> Result<Option<Vec<TextEdit>>> {
+        let uri_str = params.text_document.uri.to_string();
+        let opts = intellisense::FormatOptions::from_lsp(&params.options);
+        let state = Arc::clone(&self.state);
+
+        let edits = tokio::task::spawn_blocking(move || {
+            let state = state.blocking_read();
+            let text = state.get_text(&uri_str)?;
+            Some(intellisense::format_document(&text, &opts))
+        })
+        .await
+        .unwrap_or_default()
+        .unwrap_or_default();
+
+        if edits.is_empty() { Ok(None) } else { Ok(Some(edits)) }
+    }
+
+    async fn range_formatting(&self, params: DocumentRangeFormattingParams) -> Result<Option<Vec<TextEdit>>> {
+        let uri_str = params.text_document.uri.to_string();
+        let opts = intellisense::FormatOptions::from_lsp(&params.options);
+        let range = params.range;
+        let state = Arc::clone(&self.state);
+
+        let edits = tokio::task::spawn_blocking(move || {
+            let state = state.blocking_read();
+            let text = state.get_text(&uri_str)?;
+            Some(intellisense::format_range(&text, range, &opts))
+        })
+        .await
+        .unwrap_or_default()
+        .unwrap_or_default();
+
+        if edits.is_empty() { Ok(None) } else { Ok(Some(edits)) }
     }
 }

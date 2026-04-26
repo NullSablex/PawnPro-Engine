@@ -510,15 +510,15 @@ pub fn parse_file(text: &str) -> ParsedFile {
                 continue;
             }
 
-            // enum — captura nome (como StaticConst) e membros
+            // enum — captura nome e membros
             if let Some(enum_cap) = RX_ENUM.captures(line) {
-                // Registra o nome do enum como símbolo StaticConst (usado como tag/tipo)
+                // Nome do enum como tipo/tag — kind dedicado para hover correto
                 let enum_name = enum_cap.get(1).map(|m| m.as_str()).unwrap_or("");
                 if !enum_name.is_empty() && !RESERVED.contains(enum_name) {
                     let col = raw_line.find(enum_name).unwrap_or(0) as u32;
                     result.symbols.push(Symbol {
                         name: enum_name.to_string(),
-                        kind: SymbolKind::StaticConst,
+                        kind: SymbolKind::Enum,
                         signature: None, params: vec![],
                         deprecated, doc: extract_doc(&raw_lines, line_idx),
                         line: line_idx as u32, col,
@@ -771,12 +771,14 @@ pub fn parse_file(text: &str) -> ParsedFile {
 
             // Variáveis: new/const com suporte a múltiplas declarações (new a, b, c)
             if let Some(cap) = RX_NEW_DECL.captures(line) {
+                let is_const = line.trim_start().to_ascii_lowercase().starts_with("const");
+                let kind = if is_const { SymbolKind::Const } else { SymbolKind::Variable };
                 for name in extract_var_names(&cap[1]) {
                     if !RESERVED.contains(name.as_str()) {
                         let col = raw_line.find(&name).unwrap_or(0) as u32;
                         result.symbols.push(Symbol {
                             name,
-                            kind: SymbolKind::Variable,
+                            kind: kind.clone(),
                             signature: None,
                             params: vec![],
                             deprecated,

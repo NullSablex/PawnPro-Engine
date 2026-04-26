@@ -76,9 +76,11 @@ fn format_symbol(sym: &Symbol) -> Hover {
         SymbolKind::Stock => "stock",
         SymbolKind::Static => "static",
         SymbolKind::Plain => "",
-        SymbolKind::StaticConst => "static const",
+        SymbolKind::StaticConst => "const",
+        SymbolKind::Enum => "enum",
         SymbolKind::Define => "#define",
-        SymbolKind::Variable => "//",
+        SymbolKind::Variable => "new",
+        SymbolKind::Const => "const",
     };
 
     let mut md = if let Some(sig) = &sym.signature {

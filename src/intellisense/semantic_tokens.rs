@@ -15,7 +15,7 @@ pub fn get_semantic_tokens(state: &WorkspaceState, uri: &str) -> Option<Semantic
     let sdk_callables: std::collections::HashSet<&str> = sdk
         .symbols
         .iter()
-        .filter(|s| !matches!(s.kind, SymbolKind::Variable | SymbolKind::Define))
+        .filter(|s| !matches!(s.kind, SymbolKind::Variable | SymbolKind::Define | SymbolKind::Enum | SymbolKind::StaticConst))
         .map(|s| s.name.as_str())
         .collect();
 

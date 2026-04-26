@@ -15,12 +15,12 @@ static RX_IDENT: Lazy<Regex> = Lazy::new(|| Regex::new(r"\b([A-Za-z_]\w*)\b").un
 
 #[derive(Clone, Copy)]
 enum CollectMode {
-    /// Coleta chamadas `name(`, ignorando linhas de declaração de funções
+    /// Coleta chamadas `name(`, ignorando linhas de declaração de funções e #define
     Calls,
-    /// Coleta todos os idents, ignorando linhas de declaração de variáveis
+    /// Coleta todos os idents, ignorando linhas de declaração de variáveis e #define
     AllIdents,
-    /// Coleta todos os idents, ignorando linhas com `#` (diretivas)
-    IdentsNoDeclLines,
+    /// Coleta todos os idents de linhas não-diretiva (sem `#`), exceto #define — usado para defines
+    IdentsNoDefineLines,
 }
 
 fn collect_idents(text: &str, mode: CollectMode) -> HashSet<String> {
@@ -32,7 +32,13 @@ fn collect_idents(text: &str, mode: CollectMode) -> HashSet<String> {
         let stripped = strip_line_comments(raw, in_block);
         in_block = stripped.in_block;
 
-        let trimmed_lower = stripped.text.trim_start().to_ascii_lowercase();
+        let trimmed = stripped.text.trim_start();
+        let trimmed_lower = trimmed.to_ascii_lowercase();
+
+        // Linhas #define são sempre skippadas em todos os modos — evita auto-match do nome
+        if trimmed_lower.starts_with("#define") || trimmed_lower.starts_with("# define") {
+            continue;
+        }
 
         let skip = match mode {
             CollectMode::Calls => {
@@ -48,7 +54,8 @@ fn collect_idents(text: &str, mode: CollectMode) -> HashSet<String> {
                     || ((trimmed_lower.starts_with("static ") || trimmed_lower.starts_with("static\t"))
                         && !stripped.text.contains('('))
             }
-            CollectMode::IdentsNoDeclLines => stripped.text.trim_start().starts_with('#'),
+            // Para IdentsNoDefineLines: aceita só linhas sem qualquer diretiva `#`
+            CollectMode::IdentsNoDefineLines => trimmed.starts_with('#'),
         };
 
         if skip {
@@ -57,7 +64,7 @@ fn collect_idents(text: &str, mode: CollectMode) -> HashSet<String> {
 
         let rx = match mode {
             CollectMode::Calls => &*RX_CALL,
-            CollectMode::AllIdents | CollectMode::IdentsNoDeclLines => &*RX_IDENT,
+            CollectMode::AllIdents | CollectMode::IdentsNoDefineLines => &*RX_IDENT,
         };
 
         for cap in rx.captures_iter(&stripped.text) {
@@ -82,10 +89,33 @@ pub fn analyze_unused(
     let local_calls = collect_idents(text, CollectMode::Calls);
     let local_idents = collect_idents(text, CollectMode::AllIdents);
 
-    // PP0005 — variáveis não usadas (sempre, independente de ser .inc)
+    if is_inc && !warn_unused_in_inc {
+        return diags;
+    }
+
+    // Computa all_calls e all_idents uma única vez — reutilizado por todos os diagnósticos abaixo.
+    // Escopo: arquivo atual + includes transitivos + todos os arquivos do workspace.
+    let mut all_calls = local_calls.clone();
+    let mut all_idents_ws = local_idents.clone();
+    let mut all_idents_no_directives = collect_idents(text, CollectMode::IdentsNoDefineLines);
+    for fp in &resolved.paths {
+        if let Some(entry) = resolved.files.get(fp) {
+            all_calls.extend(collect_idents(&entry.text, CollectMode::Calls));
+            all_idents_ws.extend(collect_idents(&entry.text, CollectMode::AllIdents));
+            all_idents_no_directives.extend(collect_idents(&entry.text, CollectMode::IdentsNoDefineLines));
+        }
+    }
+    if let Some(root) = workspace_root {
+        collect_workspace_calls(root, file_path, &mut all_calls);
+        collect_workspace_idents(root, file_path, &mut all_idents_ws);
+        collect_workspace_idents_no_directives(root, file_path, &mut all_idents_no_directives);
+    }
+
+    // PP0005 — variáveis declaradas mas não utilizadas
+    // Varre workspace inteiro: uma variável global em .inc pode ser lida por qualquer .pwn.
     for sym in parsed.symbols.iter().filter(|s| matches!(s.kind, SymbolKind::Variable)) {
         if sym.name.starts_with('_') { continue; }
-        if !local_idents.contains(&sym.name) {
+        if !all_idents_ws.contains(&sym.name) {
             diags.push(PawnDiagnostic::unnecessary_warning(
                 sym.line, sym.col, sym.col + sym.name.len() as u32,
                 codes::PP0005,
@@ -94,69 +124,71 @@ pub fn analyze_unused(
         }
     }
 
-    if is_inc && !warn_unused_in_inc {
-        return diags;
-    }
-
     // PP0006 — stocks/statics não usados
-    // Para .inc: varrer todos os .pwn do workspace — a stock pode ser usada por qualquer
-    // arquivo que inclua este .inc, não apenas pelos includes transitivos do próprio arquivo.
-    let stock_syms: Vec<_> = parsed
-        .symbols
-        .iter()
+    for sym in parsed.symbols.iter()
         .filter(|s| matches!(s.kind, SymbolKind::Stock | SymbolKind::Static))
-        .collect();
-
-    if !stock_syms.is_empty() {
-        // Coleta chamadas do arquivo atual + includes transitivos + todos os arquivos do workspace.
-        // Isso espelha o compilador real: ele avalia "não usada" no contexto da compilation
-        // unit inteira, que pode incluir qualquer arquivo que referencie este.
-        let mut all_calls = local_calls.clone();
-        for fp in &resolved.paths {
-            if let Some(entry) = resolved.files.get(fp) {
-                all_calls.extend(collect_idents(&entry.text, CollectMode::Calls));
-            }
-        }
-        if let Some(root) = workspace_root {
-            collect_workspace_calls(root, file_path, &mut all_calls);
-        }
-
-        for sym in &stock_syms {
-            if sym.name.starts_with('_') { continue; }
-            if !all_calls.contains(&sym.name) {
-                diags.push(PawnDiagnostic::unnecessary_warning(
-                    sym.line, sym.col, sym.col + sym.name.len() as u32,
-                    codes::PP0006,
-                    format!("\"{}\" função stock declarada mas não utilizada", sym.name),
-                ));
-            }
+    {
+        if sym.name.starts_with('_') { continue; }
+        if !all_calls.contains(&sym.name) {
+            diags.push(PawnDiagnostic::unnecessary_warning(
+                sym.line, sym.col, sym.col + sym.name.len() as u32,
+                codes::PP0006,
+                format!("\"{}\" função stock declarada mas não utilizada", sym.name),
+            ));
         }
     }
 
-    // PP0011 — defines não usados
-    if !parsed.macro_names.is_empty() {
-        let idents_no_directives = collect_idents(text, CollectMode::IdentsNoDeclLines);
-        for sym in parsed.symbols.iter().filter(|s| matches!(s.kind, SymbolKind::Define)) {
-            if sym.name.starts_with('_') { continue; }
-            // Macros com parâmetros são chamadas como funções: checar em local_calls também
-            let used_as_ident = idents_no_directives.contains(&sym.name);
-            let used_as_call = local_calls.contains(&sym.name);
-            if !used_as_ident && !used_as_call {
-                diags.push(PawnDiagnostic::hint(
-                    sym.line, sym.col, sym.col + sym.name.len() as u32,
-                    codes::PP0011,
-                    format!("\"{}\" definido mas não utilizado", sym.name),
-                ));
-            }
+    // PP0014 — natives declaradas mas nunca chamadas em nenhum arquivo do workspace
+    for sym in parsed.symbols.iter().filter(|s| matches!(s.kind, SymbolKind::Native)) {
+        if sym.name.starts_with('_') { continue; }
+        if !all_calls.contains(&sym.name) {
+            diags.push(PawnDiagnostic::hint(
+                sym.line, sym.col, sym.col + sym.name.len() as u32,
+                codes::PP0014,
+                format!("\"{}\" native declarada mas nunca chamada", sym.name),
+            ));
+        }
+    }
+
+    // PP0015 — forwards declarados mas nunca chamados
+    for sym in parsed.symbols.iter().filter(|s| matches!(s.kind, SymbolKind::Forward)) {
+        if sym.name.starts_with('_') { continue; }
+        if !all_calls.contains(&sym.name) {
+            diags.push(PawnDiagnostic::hint(
+                sym.line, sym.col, sym.col + sym.name.len() as u32,
+                codes::PP0015,
+                format!("\"{}\" forward declarado mas nunca chamado", sym.name),
+            ));
+        }
+    }
+
+    // PP0016 — funções plain (sem keyword) declaradas mas nunca chamadas
+    for sym in parsed.symbols.iter().filter(|s| matches!(s.kind, SymbolKind::Plain)) {
+        if sym.name.starts_with('_') { continue; }
+        if !all_calls.contains(&sym.name) {
+            diags.push(PawnDiagnostic::unnecessary_warning(
+                sym.line, sym.col, sym.col + sym.name.len() as u32,
+                codes::PP0016,
+                format!("\"{}\" função declarada mas nunca chamada", sym.name),
+            ));
+        }
+    }
+
+    // PP0011 — defines não usados (varredura workspace para evitar falsos positivos em .inc)
+    for sym in parsed.symbols.iter().filter(|s| matches!(s.kind, SymbolKind::Define)) {
+        if sym.name.starts_with('_') { continue; }
+        let used_as_ident = all_idents_no_directives.contains(&sym.name);
+        let used_as_call = all_calls.contains(&sym.name);
+        if !used_as_ident && !used_as_call {
+            diags.push(PawnDiagnostic::hint(
+                sym.line, sym.col, sym.col + sym.name.len() as u32,
+                codes::PP0011,
+                format!("\"{}\" definido mas não utilizado", sym.name),
+            ));
         }
     }
 
     // PP0012 — includes cujos símbolos não são usados
-    // Usa all_calls que já inclui o workspace inteiro, mais local_idents para não-funções.
-    let mut all_idents = local_idents.clone();
-    if let Some(root) = workspace_root {
-        collect_workspace_idents(root, file_path, &mut all_idents);
-    }
     for inc in &parsed.includes {
         let Some(rp) = find_resolved_path(inc, &resolved.paths) else { continue };
         let Some(entry) = resolved.files.get(rp) else { continue };
@@ -168,7 +200,7 @@ pub fn analyze_unused(
 
         if exported.is_empty() { continue; }
 
-        if !exported.iter().any(|name| all_idents.contains(name)) {
+        if !exported.iter().any(|name| all_idents_ws.contains(name)) {
             diags.push(PawnDiagnostic::hint(
                 inc.line, inc.col, inc.col + inc.token.len() as u32,
                 codes::PP0012,
@@ -225,6 +257,16 @@ fn collect_workspace_idents(root: &Path, exclude: &Path, out: &mut HashSet<Strin
         if let Ok(bytes) = std::fs::read(&path) {
             let text = crate::parser::lexer::decode_bytes(&bytes);
             out.extend(collect_idents(&text, CollectMode::AllIdents));
+        }
+    }
+}
+
+/// Varre todos os arquivos do workspace e acumula idents excluindo linhas de diretivas.
+fn collect_workspace_idents_no_directives(root: &Path, exclude: &Path, out: &mut HashSet<String>) {
+    for path in workspace_files(root, exclude) {
+        if let Ok(bytes) = std::fs::read(&path) {
+            let text = crate::parser::lexer::decode_bytes(&bytes);
+            out.extend(collect_idents(&text, CollectMode::IdentsNoDefineLines));
         }
     }
 }

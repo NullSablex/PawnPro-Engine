@@ -9,9 +9,15 @@ pub enum SymbolKind {
     /// Função sem keyword — tratada pelo compilador como "global não-stock":
     /// não exportada no AMX, não isenta de warning 203 se não chamada internamente.
     Plain,
+    /// Constante: membro de enum, `stock const`, `static const`
     StaticConst,
+    /// Nome de enum declarado: `enum NomeDoEnum { ... }`
+    Enum,
     Define,
-    Variable, // new / static (variável) / const
+    /// Variável declarada com `new` ou `static` (não constante)
+    Variable,
+    /// Constante declarada com `const`
+    Const,
 }
 
 /// Parâmetro de uma função.

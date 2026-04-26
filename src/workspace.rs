@@ -119,6 +119,11 @@ impl WorkspaceState {
     pub fn analyze(&self, uri: &str) -> Vec<PawnDiagnostic> {
         let Some(text) = self.get_text(uri) else { return vec![] };
         let Some(file_path) = uri_to_path(uri) else { return vec![] };
+
+        if self.config.analysis.suppress_diagnostics_in_inc && is_include_file(&file_path) {
+            return vec![];
+        }
+
         let parsed = parse_file(&text);
         let inc_paths = self.include_paths();
         let resolved = collect_included_files(&file_path, &inc_paths, &parsed.includes, 16, 1000);
@@ -184,6 +189,13 @@ fn percent_decode(s: &str) -> String {
         i += 1;
     }
     out
+}
+
+fn is_include_file(path: &std::path::Path) -> bool {
+    matches!(
+        path.extension().and_then(|e| e.to_str()),
+        Some("inc") | Some("p") | Some("pawn")
+    )
 }
 
 fn parse_sdk(path: &PathBuf) -> Option<ParsedFile> {
