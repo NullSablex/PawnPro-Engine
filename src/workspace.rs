@@ -129,6 +129,7 @@ impl WorkspaceState {
         diags.extend(unused::analyze_unused(
             &text, &file_path, &parsed, &resolved,
             self.config.analysis.warn_unused_in_inc,
+            self.workspace_root.as_deref(),
         ));
         diags.extend(deprecated::analyze_deprecated(&text, &file_path, &parsed, &inc_paths, &resolved));
         diags.extend(hints::analyze_hints(&text, &parsed.symbols));

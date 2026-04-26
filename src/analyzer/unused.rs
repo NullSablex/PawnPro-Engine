@@ -5,7 +5,7 @@ use once_cell::sync::Lazy;
 use regex::Regex;
 
 use crate::parser::lexer::strip_line_comments;
-use crate::parser::{ParsedFile, Symbol, SymbolKind};
+use crate::parser::{ParsedFile, SymbolKind};
 
 use super::includes::ResolvedIncludes;
 use super::{codes, diagnostic::PawnDiagnostic};
@@ -74,6 +74,7 @@ pub fn analyze_unused(
     parsed: &ParsedFile,
     resolved: &ResolvedIncludes,
     warn_unused_in_inc: bool,
+    workspace_root: Option<&Path>,
 ) -> Vec<PawnDiagnostic> {
     let mut diags = Vec::new();
     let is_inc = has_extension(file_path, "inc");
@@ -98,6 +99,8 @@ pub fn analyze_unused(
     }
 
     // PP0006 — stocks/statics não usados
+    // Para .inc: varrer todos os .pwn do workspace — a stock pode ser usada por qualquer
+    // arquivo que inclua este .inc, não apenas pelos includes transitivos do próprio arquivo.
     let stock_syms: Vec<_> = parsed
         .symbols
         .iter()
@@ -105,11 +108,22 @@ pub fn analyze_unused(
         .collect();
 
     if !stock_syms.is_empty() {
-        let used = collect_used_stocks(&stock_syms, &local_calls, &resolved.paths, resolved);
+        // Coleta chamadas do arquivo atual + includes transitivos + todos os arquivos do workspace.
+        // Isso espelha o compilador real: ele avalia "não usada" no contexto da compilation
+        // unit inteira, que pode incluir qualquer arquivo que referencie este.
+        let mut all_calls = local_calls.clone();
+        for fp in &resolved.paths {
+            if let Some(entry) = resolved.files.get(fp) {
+                all_calls.extend(collect_idents(&entry.text, CollectMode::Calls));
+            }
+        }
+        if let Some(root) = workspace_root {
+            collect_workspace_calls(root, file_path, &mut all_calls);
+        }
 
         for sym in &stock_syms {
             if sym.name.starts_with('_') { continue; }
-            if !used.contains(&sym.name) {
+            if !all_calls.contains(&sym.name) {
                 diags.push(PawnDiagnostic::unnecessary_warning(
                     sym.line, sym.col, sym.col + sym.name.len() as u32,
                     codes::PP0006,
@@ -138,6 +152,11 @@ pub fn analyze_unused(
     }
 
     // PP0012 — includes cujos símbolos não são usados
+    // Usa all_calls que já inclui o workspace inteiro, mais local_idents para não-funções.
+    let mut all_idents = local_idents.clone();
+    if let Some(root) = workspace_root {
+        collect_workspace_idents(root, file_path, &mut all_idents);
+    }
     for inc in &parsed.includes {
         let Some(rp) = find_resolved_path(inc, &resolved.paths) else { continue };
         let Some(entry) = resolved.files.get(rp) else { continue };
@@ -149,7 +168,7 @@ pub fn analyze_unused(
 
         if exported.is_empty() { continue; }
 
-        if !exported.iter().any(|name| local_idents.contains(name)) {
+        if !exported.iter().any(|name| all_idents.contains(name)) {
             diags.push(PawnDiagnostic::hint(
                 inc.line, inc.col, inc.col + inc.token.len() as u32,
                 codes::PP0012,
@@ -170,38 +189,42 @@ fn has_extension(path: &Path, ext: &str) -> bool {
         .unwrap_or(false)
 }
 
-fn collect_used_stocks(
-    stocks: &[&Symbol],
-    local_calls: &HashSet<String>,
-    paths: &[std::path::PathBuf],
-    resolved: &ResolvedIncludes,
-) -> HashSet<String> {
-    let mut used: HashSet<String> = stocks
-        .iter()
-        .filter(|s| local_calls.contains(&s.name))
-        .map(|s| s.name.clone())
-        .collect();
-
-    if used.len() == stocks.len() {
-        return used;
-    }
-
-    'outer: for fp in paths {
-        let inc_calls = resolved.files.get(fp)
-            .map(|e| collect_idents(&e.text, CollectMode::Calls))
-            .unwrap_or_default();
-
-        for sym in stocks {
-            if !used.contains(&sym.name) && inc_calls.contains(&sym.name) {
-                used.insert(sym.name.clone());
-                if used.len() == stocks.len() {
-                    break 'outer;
-                }
+fn workspace_files<'a>(root: &'a Path, exclude: &'a Path) -> impl Iterator<Item = std::path::PathBuf> + 'a {
+    walkdir::WalkDir::new(root)
+        .follow_links(false)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(move |e| {
+            e.file_type().is_file() && {
+                let p = e.path();
+                p != exclude && matches!(
+                    p.extension().and_then(|x| x.to_str()),
+                    Some("pwn") | Some("inc")
+                )
             }
+        })
+        .map(|e| e.into_path())
+}
+
+/// Varre todos os arquivos .pwn e .inc do workspace (exceto o próprio arquivo)
+/// e acumula todas as chamadas de função encontradas.
+fn collect_workspace_calls(root: &Path, exclude: &Path, out: &mut HashSet<String>) {
+    for path in workspace_files(root, exclude) {
+        if let Ok(bytes) = std::fs::read(&path) {
+            let text = crate::parser::lexer::decode_bytes(&bytes);
+            out.extend(collect_idents(&text, CollectMode::Calls));
         }
     }
+}
 
-    used
+/// Varre todos os arquivos do workspace e acumula todos os identificadores.
+fn collect_workspace_idents(root: &Path, exclude: &Path, out: &mut HashSet<String>) {
+    for path in workspace_files(root, exclude) {
+        if let Ok(bytes) = std::fs::read(&path) {
+            let text = crate::parser::lexer::decode_bytes(&bytes);
+            out.extend(collect_idents(&text, CollectMode::AllIdents));
+        }
+    }
 }
 
 fn find_resolved_path<'a>(
