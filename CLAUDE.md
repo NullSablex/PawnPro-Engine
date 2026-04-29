@@ -15,6 +15,7 @@ Servidor LSP em Rust para a linguagem **Pawn** (SA-MP / open.mp). Comunica-se co
 - **`cargo clippy -- -D warnings` deve passar sem erros** antes de qualquer commit.
 - **Novos diagnósticos sempre em `analyzer/codes.rs`** com constante `pub const PP####`.
 - **`parsed_cache` usa `PathBuf` como chave**, não `String` (URI). Converter URI → path antes de acessar.
+- **`dep_graph` usa `PathBuf` em ambos os lados** — nunca `String`/URI. Converter antes de inserir.
 - **Sem comentários óbvios**. Apenas comentários que explicam *por quê* — restrições ocultas, invariantes sutis, workarounds de bugs específicos.
 
 ---
@@ -61,14 +62,19 @@ src/
 ```rust
 pub struct WorkspaceState {
     pub parsed_cache: DashMap<PathBuf, Arc<ParsedFile>>,
-    pub dep_graph: DashMap<PathBuf, HashSet<String>>,  // include_path → URIs que dependem dele
+    pub dep_graph: DashMap<PathBuf, HashSet<PathBuf>>,  // include_path → paths que o incluem
     pub tabsize_cache: Mutex<Option<Option<u32>>>,
     // ...
 }
 ```
 - `parsed_cache` usa `PathBuf` como chave — **nunca String/URI**.
-- `dep_graph` é o grafo reverso de dependências: permite invalidar só os arquivos afetados quando um include muda.
+- `dep_graph` é o grafo reverso de dependências puro em paths: `c.inc → {b.inc}`, `b.inc → {a.pwn}`. Permite invalidar transitivamente pelo BFS.
 - `tabsize_cache` usa `Mutex` para interior mutability em `&self`.
+
+Métodos relevantes:
+- `open_dependents(uri)` — BFS no `dep_graph` a partir de um URI, retorna URIs dos arquivos **abertos no editor** que dependem transitivamente dele.
+- `evict_dependents(path)` — BFS no `dep_graph` removendo do `parsed_cache` todos os dependentes transitivos.
+- `evict_path_from_cache(path)` — remove o path e seus dependentes do cache (usado por `did_change_watched_files`).
 
 ### `ParsedFile` (`parser/types.rs`)
 Armazenado como `Arc<ParsedFile>` no cache. Contém:
@@ -90,7 +96,11 @@ pub struct ResolvedIncludes {
 `reverse_deps` é construído durante a resolução BFS e usado por `record_dependencies` em `workspace.rs` para atualizar `dep_graph`.
 
 ### `Symbol` (`parser/types.rs`)
-- `kind: SymbolKind` — `Native | Forward | Public | Stock | Static | StaticConst | Define | Variable`
+- `kind: SymbolKind` — `Native | Forward | Public | Stock | Static | Plain | StaticConst | Enum | Define | Variable | Const`
+  - `Plain` — função sem keyword (global não-stock); não exportada no AMX
+  - `StaticConst` — constante: membro de enum, `stock const`, `static const`
+  - `Enum` — nome do enum declarado (`enum NomeDoEnum { ... }`)
+  - `Const` — constante declarada com `const`
 - `deprecated: bool` — marcado com `@DEPRECATED`
 - `doc: Option<String>` — comentário de documentação acima da declaração
 - `line: u32`, `col: u32` — posição 0-based em bytes UTF-8
@@ -119,16 +129,18 @@ Para cada arquivo aberto ou alterado:
 1. `decode_bytes(bytes)` — decodifica UTF-8 com fallback latin-1
 2. `parse_file(text, path)` — extrai `ParsedFile`, armazena como `Arc<ParsedFile>` em `parsed_cache`
 3. `resolve_includes(parsed, path, include_paths)` — resolve recursivamente todos os includes transitivos → `ResolvedIncludes` (inclui `reverse_deps`)
-4. `record_dependencies(uri, &resolved.reverse_deps)` — atualiza `dep_graph`
+4. `record_dependencies(&resolved.reverse_deps)` — atualiza `dep_graph`
 5. Cada analyzer recebe `(text, path, parsed, resolved)` e retorna `Vec<PawnDiagnostic>`
 6. Diagnósticos publicados via `client.publish_diagnostics()`
 
-### Invalidação granular de cache
-Quando um include é modificado (`change_document`):
-- `evict_uri_from_cache(uri)` — remove o próprio arquivo do `parsed_cache`
-- `evict_dependents(uri)` — percorre `dep_graph` e remove do cache apenas os arquivos que dependem desse include
+### Invalidação granular de cache e republicação
 
-Isso evita invalidar o cache inteiro quando só um include muda.
+`dep_graph: DashMap<PathBuf, HashSet<PathBuf>>` mapeia cada include para o conjunto de arquivos que o incluem diretamente. `record_dependencies` propaga o mapa completo de `reverse_deps` retornado por `collect_included_files` — preservando a estrutura `c.inc → {b.inc}`, `b.inc → {a.pwn}`.
+
+Quando um include muda:
+1. `evict_dependents(path)` — BFS sobre `dep_graph`, remove do `parsed_cache` todos os dependentes transitivos.
+2. `open_dependents(uri)` — BFS sobre `dep_graph`, coleta os URIs dos arquivos abertos que dependem transitivamente do include alterado.
+3. Os handlers `did_change`, `did_save` e `did_change_watched_files` chamam `open_dependents` e republicam diagnósticos para cada dependente aberto — garantindo que `main.pwn` receba diagnósticos atualizados quando `b.inc` ou `c.inc` mudam, mesmo que o usuário não edite `main.pwn`.
 
 ---
 
@@ -163,20 +175,41 @@ Funções utilitárias canônicas — **não duplicar em outros módulos**:
 
 ---
 
-## Configuração recebida via LSP
+## Configuração
+
+### `EngineConfig` (`config.rs`) — carregada do disco
 
 ```rust
 pub struct EngineConfig {
-    pub include_paths: Vec<PathBuf>,
+    pub include_paths: Vec<String>,   // suporta ${workspaceFolder}
+    pub analysis: AnalysisConfig,
+}
+pub struct AnalysisConfig {
     pub warn_unused_in_inc: bool,
     pub suppress_diagnostics_in_inc: bool,
-    pub sdk_file_path: Option<PathBuf>,
-    pub workspace_folder: Option<PathBuf>,
-    pub locale: Locale,
+    pub sdk: SdkConfig,
+}
+pub struct SdkConfig {
+    pub platform: String,
+    pub file_path: String,
 }
 ```
 
-Recebida em `initializationOptions` e atualizada via `workspace/didChangeConfiguration`. Ambos os caminhos usam `ConfigUpdate` — não duplicar lógica de parsing entre eles.
+Carregada automaticamente de `~/.pawnpro/config.json` (global) e `.pawnpro/config.json` (projeto). Merge: projeto sobrescreve global; valores não-default ganham. `${workspaceFolder}` é substituído em runtime por `resolved_include_paths()`.
+
+### `ConfigUpdate` (`server.rs`) — recebida via LSP
+
+Campos aceitos em `initializationOptions` e em `workspace/didChangeConfiguration`:
+
+| Campo JSON | Tipo | Destino em `WorkspaceState` |
+|------------|------|-----------------------------|
+| `includePaths` | `string[]` | `include_paths_override` |
+| `warnUnusedInInc` | `bool` | `config.analysis.warn_unused_in_inc` |
+| `suppressDiagnosticsInInc` | `bool` | `config.analysis.suppress_diagnostics_in_inc` |
+| `sdkFilePath` | `string` | `sdk_file` |
+| `locale` | `string` | `locale` (`"pt-BR"` → `Locale::PtBr`) |
+
+`apply_init` aplica na inicialização; `apply_change` aplica em tempo real e retorna `bool` indicando se algo mudou (para controlar o republish). Nunca duplicar lógica de parsing entre os dois caminhos — usar `ConfigUpdate`.
 
 ---
 
@@ -203,3 +236,6 @@ cargo clippy -- -D warnings    # deve passar sem erros
 - `Arc<ParsedFile>`: ao estender símbolos de um include, usar `.clone()` — `all.extend(inc_parsed.symbols.clone())`.
 - `unused.rs` usa `collect_workspace_all()` — função única que faz um único walkdir em vez de três chamadas separadas a `collect_workspace()`.
 - `open_docs` na engine guarda a chave como URI completa (`file:///...`). Nunca fazer `format!("file://{}", key)` — já tem o prefixo.
+- `dep_graph` guarda `PathBuf → HashSet<PathBuf>` — nunca URIs. `open_dependents` faz a conversão path→URI na saída, não na entrada.
+- `collect_transitive_exports` em `unused.rs` faz BFS sobre `ResolvedIncludes` para coletar símbolos diretos e transitivos de um include antes de emitir PP0012 — não checar apenas `entry.parsed.symbols` diretamente.
+- `did_change`/`did_save`/`did_change_watched_files` em `server.rs` republicam os dependentes abertos via `open_dependents`, não apenas o arquivo alterado.

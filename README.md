@@ -23,13 +23,15 @@ A extensão PawnPro inicia o motor automaticamente ao detectar o binário. Se o 
 
 ## Capacidades
 
-- **Diagnósticos** — 13 códigos `PP####` cobrindo erros de estrutura, código morto, símbolos não declarados e depreciação (ver [docs/diagnostics.md](docs/diagnostics.md)).
+- **Diagnósticos** — 17 códigos `PP####` cobrindo erros de estrutura, código morto, símbolos não declarados, depreciação e indentação (ver [docs/diagnostics.md](docs/diagnostics.md)).
 - **Completions** — símbolos de todos os includes transitivos com snippets de parâmetros; itens depreciados marcados.
 - **Hover** — assinatura e comentário de documentação; em `#include` mostra o caminho resolvido.
 - **Signature Help** — parâmetro ativo destacado ao digitar `(` e `,`.
 - **CodeLens** — contagem de referências para todas as funções; clicável.
 - **References** — `textDocument/references` (Shift+F12).
 - **Semantic Tokens** — coloração semântica com suporte a chamadas multiline.
+- **Formatação** — documento inteiro e seleção de intervalo.
+- **Invalidação granular** — ao salvar um include, o motor republica automaticamente os diagnósticos de todos os arquivos abertos que dependem dele, transitivamente.
 
 Para detalhes do protocolo e das opções de configuração, consulte [docs/lsp.md](docs/lsp.md).
 

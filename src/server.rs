@@ -30,7 +30,6 @@ impl PawnProServer {
         let state = Arc::clone(&self.state);
         let uri_str = uri.to_string();
 
-        // analyze() does synchronous I/O — spawn_blocking avoids stalling the runtime.
         let raw_diags = tokio::task::spawn_blocking(move || {
             state.blocking_read().analyze(&uri_str)
         })
@@ -122,7 +121,58 @@ impl LanguageServer for PawnProServer {
                 params.text_document.version,
             );
         }
-        self.publish_diagnostics_for(uri).await;
+
+        let dependents = self.state.read().await.open_dependents(uri.as_str());
+        let mut targets: Vec<Url> = dependents
+            .into_iter()
+            .filter_map(|u| Url::parse(&u).ok())
+            .collect();
+        if targets.is_empty() {
+            targets.push(uri);
+        }
+        join_all(targets.into_iter().map(|u| self.publish_diagnostics_for(u))).await;
+    }
+
+    async fn did_save(&self, params: DidSaveTextDocumentParams) {
+        let uri = params.text_document.uri.clone();
+        let dependents = self.state.read().await.open_dependents(uri.as_str());
+        let mut targets: Vec<Url> = dependents
+            .into_iter()
+            .filter_map(|u| Url::parse(&u).ok())
+            .collect();
+        if targets.is_empty() {
+            targets.push(uri);
+        }
+        join_all(targets.into_iter().map(|u| self.publish_diagnostics_for(u))).await;
+    }
+
+    async fn did_change_watched_files(&self, params: DidChangeWatchedFilesParams) {
+        let changed_paths: Vec<Url> = params
+            .changes
+            .into_iter()
+            .map(|c| c.uri)
+            .collect();
+
+        let mut to_republish: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+        for uri in &changed_paths {
+            let state = self.state.read().await;
+            if let Some(path) = uri_to_path(uri.as_str()) {
+                state.evict_path_from_cache(&path);
+            }
+            let dependents = state.open_dependents(uri.as_str());
+            if dependents.is_empty() {
+                to_republish.insert(uri.to_string());
+            } else {
+                to_republish.extend(dependents);
+            }
+        }
+
+        let targets: Vec<Url> = to_republish
+            .into_iter()
+            .filter_map(|u| Url::parse(&u).ok())
+            .collect();
+        join_all(targets.into_iter().map(|u| self.publish_diagnostics_for(u))).await;
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
@@ -460,7 +510,14 @@ fn lsp_diagnostic_from(d: crate::analyzer::PawnDiagnostic) -> Diagnostic {
 
 fn server_capabilities() -> ServerCapabilities {
     ServerCapabilities {
-        text_document_sync: Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::FULL)),
+        text_document_sync: Some(TextDocumentSyncCapability::Options(TextDocumentSyncOptions {
+            open_close: Some(true),
+            change: Some(TextDocumentSyncKind::FULL),
+            save: Some(TextDocumentSyncSaveOptions::SaveOptions(SaveOptions {
+                include_text: Some(false),
+            })),
+            ..Default::default()
+        })),
         completion_provider: Some(CompletionOptions {
             trigger_characters: Some(vec![
                 ".".to_string(),

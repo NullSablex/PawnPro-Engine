@@ -25,10 +25,7 @@ pub struct WorkspaceState {
     pub include_paths_override: Option<Vec<PathBuf>>,
     pub open_docs: DashMap<String, Document>,
     pub parsed_cache: DashMap<PathBuf, Arc<ParsedFile>>,
-    /// Maps each include path to the set of file URIs that depend on it.
-    /// Used for granular cache invalidation: when a single include changes,
-    /// only dependents are evicted rather than the entire cache.
-    pub dep_graph: DashMap<PathBuf, HashSet<String>>,
+    pub dep_graph: DashMap<PathBuf, HashSet<PathBuf>>,
     // tabsize is compiler-global — a single `#pragma tabsize N` in any included file
     // affects all files compiled after it, so we cache the value workspace-wide.
     pub tabsize_cache: Mutex<Option<Option<u32>>>,
@@ -140,6 +137,40 @@ impl WorkspaceState {
         Some(parsed)
     }
 
+    pub fn open_dependents(&self, uri: &str) -> Vec<String> {
+        let Some(start) = uri_to_path(uri) else { return vec![] };
+        let start = start.canonicalize().unwrap_or(start);
+
+        let mut visited: HashSet<PathBuf> = HashSet::new();
+        let mut queue = std::collections::VecDeque::new();
+        let mut result = Vec::new();
+        queue.push_back(start);
+
+        while let Some(node) = queue.pop_front() {
+            if !visited.insert(node.clone()) {
+                continue;
+            }
+            if let Some(parents) = self.dep_graph.get(&node) {
+                for parent in parents.value() {
+                    if !visited.contains(parent) {
+                        queue.push_back(parent.clone());
+                    }
+                }
+            }
+        }
+
+        for open_uri in self.open_docs.iter().map(|e| e.key().clone()) {
+            if let Some(p) = uri_to_path(&open_uri) {
+                let p = p.canonicalize().unwrap_or(p);
+                if visited.contains(&p) {
+                    result.push(open_uri);
+                }
+            }
+        }
+
+        result
+    }
+
     pub fn analyze(&self, uri: &str) -> Vec<PawnDiagnostic> {
         let Some(text) = self.get_text(uri) else { return vec![] };
         let Some(file_path) = uri_to_path(uri) else { return vec![] };
@@ -152,7 +183,7 @@ impl WorkspaceState {
         let inc_paths = self.include_paths();
         let resolved = collect_included_files(&file_path, &inc_paths, &parsed.includes, 16, 1000);
 
-        self.record_dependencies(uri, &resolved.reverse_deps);
+        self.record_dependencies(&resolved.reverse_deps);
 
         let locale = self.locale;
         let inc_texts: Vec<&str> = resolved.files.values().map(|e| e.text.as_str()).collect();
@@ -185,25 +216,43 @@ impl WorkspaceState {
         }
     }
 
+    pub fn evict_path_from_cache(&self, path: &Path) {
+        let canon = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        self.parsed_cache.remove(&canon);
+        self.evict_dependents(&canon);
+    }
+
     fn evict_dependents(&self, changed_include: &Path) {
         let canon = changed_include.canonicalize().unwrap_or_else(|_| changed_include.to_path_buf());
-        if let Some(dependents) = self.dep_graph.get(&canon) {
-            for uri in dependents.value() {
-                self.evict_uri_from_cache(uri);
+
+        let mut visited: HashSet<PathBuf> = HashSet::new();
+        let mut queue = std::collections::VecDeque::new();
+        queue.push_back(canon);
+
+        while let Some(node) = queue.pop_front() {
+            if !visited.insert(node.clone()) {
+                continue;
+            }
+            self.parsed_cache.remove(&node);
+            if let Some(dependents) = self.dep_graph.get(&node) {
+                for parent in dependents.value() {
+                    if !visited.contains(parent) {
+                        queue.push_back(parent.clone());
+                    }
+                }
             }
         }
     }
 
     fn record_dependencies(
         &self,
-        dependent_uri: &str,
         reverse_deps: &std::collections::HashMap<PathBuf, HashSet<PathBuf>>,
     ) {
-        for include_path in reverse_deps.keys() {
-            self.dep_graph
-                .entry(include_path.clone())
-                .or_default()
-                .insert(dependent_uri.to_string());
+        for (include_path, parents) in reverse_deps {
+            let mut entry = self.dep_graph.entry(include_path.clone()).or_default();
+            for parent in parents {
+                entry.insert(parent.clone());
+            }
         }
     }
 

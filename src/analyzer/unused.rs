@@ -166,12 +166,8 @@ pub fn analyze_unused(
 
     for inc in &parsed.includes {
         let Some(rp) = find_resolved_path(inc, &resolved.paths) else { continue };
-        let Some(entry) = resolved.files.get(rp) else { continue };
 
-        let exported: HashSet<String> = entry.parsed.symbols.iter()
-            .map(|s| s.name.clone())
-            .chain(entry.parsed.macro_names.iter().cloned())
-            .collect();
+        let exported = collect_transitive_exports(rp, resolved);
 
         if exported.is_empty() { continue; }
 
@@ -225,6 +221,33 @@ fn collect_workspace_all(
             no_directives.extend(collect_idents(&text, CollectMode::IdentsNoDefineLines));
         }
     }
+}
+
+fn collect_transitive_exports(
+    root: &std::path::PathBuf,
+    resolved: &ResolvedIncludes,
+) -> HashSet<String> {
+    let mut exported = HashSet::new();
+    let mut visited: HashSet<&std::path::PathBuf> = HashSet::new();
+    let mut queue = std::collections::VecDeque::new();
+    queue.push_back(root);
+
+    while let Some(path) = queue.pop_front() {
+        if !visited.insert(path) {
+            continue;
+        }
+        let Some(entry) = resolved.files.get(path) else { continue };
+        exported.extend(entry.parsed.symbols.iter().map(|s| s.name.clone()));
+        exported.extend(entry.parsed.macro_names.iter().cloned());
+
+        for nested_inc in &entry.parsed.includes {
+            if let Some(nested_path) = find_resolved_path(nested_inc, &resolved.paths) {
+                queue.push_back(nested_path);
+            }
+        }
+    }
+
+    exported
 }
 
 fn find_resolved_path<'a>(
