@@ -11,11 +11,10 @@ pub fn get_semantic_tokens(state: &WorkspaceState, uri: &str) -> Option<Semantic
 
     let sdk = state.sdk_parsed.as_ref()?;
 
-    // Build callable set directly from the SDK — natives, forwards, stocks, publics
     let sdk_callables: std::collections::HashSet<&str> = sdk
         .symbols
         .iter()
-        .filter(|s| !matches!(s.kind, SymbolKind::Variable | SymbolKind::Define))
+        .filter(|s| !matches!(s.kind, SymbolKind::Variable | SymbolKind::Define | SymbolKind::Enum | SymbolKind::StaticConst))
         .map(|s| s.name.as_str())
         .collect();
 
@@ -46,7 +45,6 @@ pub fn get_semantic_tokens(state: &WorkspaceState, uri: &str) -> Option<Semantic
             let word = &line[start..col];
 
             if sdk_callables.contains(word) {
-                // Check for '(' on the same line first (after optional spaces/tabs)
                 let mut j = col;
                 while j < bytes.len() && (bytes[j] == b' ' || bytes[j] == b'\t') {
                     j += 1;
@@ -54,7 +52,6 @@ pub fn get_semantic_tokens(state: &WorkspaceState, uri: &str) -> Option<Semantic
                 let has_paren = if j < bytes.len() && bytes[j] == b'(' {
                     true
                 } else if j >= bytes.len() {
-                    // End of line — look ahead on subsequent non-empty lines
                     let mut found = false;
                     for next_line in lines.iter().skip(line_idx + 1).take(3) {
                         let trimmed = next_line.trim_start();

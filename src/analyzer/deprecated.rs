@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use once_cell::sync::Lazy;
 use regex::Regex;
 
+use crate::messages::{msg, Locale, MsgKey};
 use crate::parser::lexer::{has_inline_deprecated, strip_line_comments};
 use crate::parser::types::IncludeDirective;
 use crate::parser::{ParsedFile, SymbolKind};
@@ -13,6 +14,13 @@ use super::{codes, diagnostic::PawnDiagnostic};
 
 #[derive(Clone)]
 enum DepKind { Individual, FromFile }
+
+#[derive(Clone)]
+struct DepEntry {
+    kind: DepKind,
+    /// Linha (0-based) da declaração no arquivo atual — `None` para símbolos de includes.
+    decl_line: Option<u32>,
+}
 
 static RX_DEPRECATED: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"^\s*(?://\s*@DEPRECATED|/\*\s*@DEPRECATED\s*\*/)\s*$").unwrap());
@@ -30,6 +38,7 @@ pub fn analyze_deprecated(
     parsed: &ParsedFile,
     include_paths: &[PathBuf],
     resolved: &ResolvedIncludes,
+    locale: Locale,
 ) -> Vec<PawnDiagnostic> {
     let mut diags = Vec::new();
     let lines: Vec<&str> = text.split('\n').collect();
@@ -65,7 +74,7 @@ pub fn analyze_deprecated(
                 diags.push(PawnDiagnostic::warning(
                     line_idx as u32, col, col + token.len() as u32,
                     codes::PP0008,
-                    format!("\"{}\" está depreciado", token),
+                    msg(locale, MsgKey::IncludeDeprecated).replace("{}", token),
                 ));
                 if let Some(resolved_path) = resolve_include(&dir, file_dir, include_paths) {
                     let canon = resolved_path.canonicalize().unwrap_or(resolved_path);
@@ -76,26 +85,26 @@ pub fn analyze_deprecated(
         }
     }
 
-    let mut dep_callables: HashMap<String, DepKind> = HashMap::new();
-    let mut dep_vars:      HashMap<String, DepKind> = HashMap::new();
-    let mut dep_macros:    HashMap<String, DepKind> = HashMap::new();
+    let mut dep_callables: HashMap<String, DepEntry> = HashMap::new();
+    let mut dep_vars:      HashMap<String, DepEntry> = HashMap::new();
+    let mut dep_macros:    HashMap<String, DepEntry> = HashMap::new();
     let mut deprecated_forward_names: HashSet<String> = HashSet::new();
     let mut deprecated_public_names:  HashSet<String> = HashSet::new();
 
     for sym in &parsed.symbols {
         if sym.deprecated {
-            classify_sym(&mut dep_callables, &mut dep_vars, &mut dep_macros, sym, DepKind::Individual);
+            classify_sym(&mut dep_callables, &mut dep_vars, &mut dep_macros, sym, DepKind::Individual, Some(sym.line));
             if sym.kind == SymbolKind::Forward { deprecated_forward_names.insert(sym.name.clone()); }
             if sym.kind == SymbolKind::Public  { deprecated_public_names.insert(sym.name.clone()); }
         }
     }
     for m in &parsed.deprecated_macros {
-        dep_macros.entry(m.clone()).or_insert(DepKind::Individual);
+        dep_macros.entry(m.clone()).or_insert(DepEntry { kind: DepKind::Individual, decl_line: None });
     }
 
     for sym in &parsed.symbols {
         if sym.kind == SymbolKind::Forward && deprecated_public_names.contains(&sym.name) {
-            dep_callables.entry(sym.name.clone()).or_insert(DepKind::Individual);
+            dep_callables.entry(sym.name.clone()).or_insert(DepEntry { kind: DepKind::Individual, decl_line: Some(sym.line) });
         }
     }
 
@@ -116,18 +125,19 @@ pub fn analyze_deprecated(
                 if sym.kind == SymbolKind::Forward && matches!(kind, DepKind::Individual) {
                     deprecated_forward_names.insert(sym.name.clone());
                 }
-                classify_sym(&mut dep_callables, &mut dep_vars, &mut dep_macros, sym, kind);
+                // Símbolos de includes não têm linha de declaração no arquivo atual.
+                classify_sym(&mut dep_callables, &mut dep_vars, &mut dep_macros, sym, kind, None);
             }
             for m in &entry.parsed.deprecated_macros {
                 let kind = if all_deprecated { DepKind::FromFile } else { DepKind::Individual };
-                dep_macros.entry(m.clone()).or_insert(kind);
+                dep_macros.entry(m.clone()).or_insert(DepEntry { kind, decl_line: None });
             }
         }
     }
 
     for sym in &parsed.symbols {
         if sym.kind == SymbolKind::Public && deprecated_forward_names.contains(&sym.name) {
-            dep_callables.entry(sym.name.clone()).or_insert(DepKind::Individual);
+            dep_callables.entry(sym.name.clone()).or_insert(DepEntry { kind: DepKind::Individual, decl_line: Some(sym.line) });
         }
     }
 
@@ -140,7 +150,7 @@ pub fn analyze_deprecated(
         diags.push(PawnDiagnostic::deprecated_decl(
             sym.line, sym.col, col_end,
             codes::PP0007,
-            format!("\"{}\" está marcado como depreciado", sym.name),
+            msg(locale, MsgKey::SymDeprecated).replace("{}", &sym.name),
         ));
     }
 
@@ -158,14 +168,15 @@ pub fn analyze_deprecated(
             if !dep_callables.is_empty() {
                 for cap in RX_CALL.captures_iter(line) {
                     let name = &cap[1];
-                    let Some(kind) = dep_callables.get(name) else { continue };
+                    let Some(entry) = dep_callables.get(name) else { continue };
+                    if entry.decl_line == Some(line_idx as u32) { continue; }
                     let before = &line[..cap.get(0).unwrap().start()];
                     if RX_DECL_PREFIX.is_match(before) { continue; }
                     let col = raw_line.find(name).unwrap_or(0) as u32;
                     diags.push(PawnDiagnostic::deprecated_warning(
                         line_idx as u32, col, col + name.len() as u32,
                         codes::PP0007,
-                        dep_msg(name, kind),
+                        dep_msg(name, &entry.kind, locale),
                     ));
                 }
             }
@@ -173,13 +184,14 @@ pub fn analyze_deprecated(
             if (!dep_vars.is_empty() || !dep_macros.is_empty()) && !is_directive {
                 for cap in RX_IDENT.captures_iter(line) {
                     let name = &cap[1];
-                    let kind = dep_vars.get(name).or_else(|| dep_macros.get(name));
-                    let Some(kind) = kind else { continue };
+                    let entry = dep_vars.get(name).or_else(|| dep_macros.get(name));
+                    let Some(entry) = entry else { continue };
+                    if entry.decl_line == Some(line_idx as u32) { continue; }
                     let col = cap.get(1).unwrap().start() as u32;
                     diags.push(PawnDiagnostic::deprecated_warning(
                         line_idx as u32, col, col + name.len() as u32,
                         codes::PP0007,
-                        dep_msg(name, kind),
+                        dep_msg(name, &entry.kind, locale),
                     ));
                 }
             }
@@ -190,22 +202,24 @@ pub fn analyze_deprecated(
 }
 
 fn classify_sym(
-    callables: &mut HashMap<String, DepKind>,
-    vars:      &mut HashMap<String, DepKind>,
-    macros:    &mut HashMap<String, DepKind>,
+    callables: &mut HashMap<String, DepEntry>,
+    vars:      &mut HashMap<String, DepEntry>,
+    macros:    &mut HashMap<String, DepEntry>,
     sym: &crate::parser::types::Symbol,
     kind: DepKind,
+    decl_line: Option<u32>,
 ) {
+    let entry = DepEntry { kind, decl_line };
     match sym.kind {
-        SymbolKind::Define   => { macros.entry(sym.name.clone()).or_insert(kind); }
-        SymbolKind::Variable => { vars.entry(sym.name.clone()).or_insert(kind); }
-        _                    => { callables.entry(sym.name.clone()).or_insert(kind); }
+        SymbolKind::Define   => { macros.entry(sym.name.clone()).or_insert(entry); }
+        SymbolKind::Variable => { vars.entry(sym.name.clone()).or_insert(entry); }
+        _                    => { callables.entry(sym.name.clone()).or_insert(entry); }
     }
 }
 
-fn dep_msg(name: &str, kind: &DepKind) -> String {
+fn dep_msg(name: &str, kind: &DepKind, locale: Locale) -> String {
     match kind {
-        DepKind::Individual => format!("\"{}\" está depreciado", name),
-        DepKind::FromFile   => format!("\"{}\" pertence a um include depreciado", name),
+        DepKind::Individual => msg(locale, MsgKey::SymDeprecatedUsage).replace("{}", name),
+        DepKind::FromFile   => msg(locale, MsgKey::SymFromDeprecatedFile).replace("{}", name),
     }
 }

@@ -131,6 +131,7 @@ fn is_func_kind(kind: &SymbolKind) -> bool {
             | SymbolKind::Stock
             | SymbolKind::Static
             | SymbolKind::Forward
+            | SymbolKind::Plain
     )
 }
 

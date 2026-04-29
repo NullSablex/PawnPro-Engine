@@ -1,11 +1,14 @@
-use std::path::PathBuf;
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use dashmap::DashMap;
 
 use crate::analyzer::PawnDiagnostic;
-use crate::analyzer::{deprecated, hints, includes, semantic, undefined, unused};
+use crate::analyzer::{deprecated, hints, includes, indentation, semantic, undefined, unused};
 use crate::analyzer::includes::collect_included_files;
 use crate::config::EngineConfig;
+use crate::messages::Locale;
 use crate::parser::{parse_file, ParsedFile};
 use crate::parser::lexer::decode_bytes;
 
@@ -18,9 +21,14 @@ pub struct Document {
 pub struct WorkspaceState {
     pub workspace_root: Option<PathBuf>,
     pub config: EngineConfig,
+    pub locale: Locale,
     pub include_paths_override: Option<Vec<PathBuf>>,
     pub open_docs: DashMap<String, Document>,
-    pub parsed_cache: DashMap<String, ParsedFile>,
+    pub parsed_cache: DashMap<PathBuf, Arc<ParsedFile>>,
+    pub dep_graph: DashMap<PathBuf, HashSet<PathBuf>>,
+    // tabsize is compiler-global — a single `#pragma tabsize N` in any included file
+    // affects all files compiled after it, so we cache the value workspace-wide.
+    pub tabsize_cache: Mutex<Option<Option<u32>>>,
     pub sdk_file: Option<PathBuf>,
     pub sdk_parsed: Option<ParsedFile>,
 }
@@ -30,9 +38,12 @@ impl WorkspaceState {
         Self {
             workspace_root: None,
             config: EngineConfig::default(),
+            locale: Locale::default(),
             include_paths_override: None,
             open_docs: DashMap::new(),
             parsed_cache: DashMap::new(),
+            dep_graph: DashMap::new(),
+            tabsize_cache: Mutex::new(None),
             sdk_file: None,
             sdk_parsed: None,
         }
@@ -46,43 +57,54 @@ impl WorkspaceState {
     pub fn set_sdk_file_opt(&mut self, path: Option<PathBuf>) {
         match path {
             Some(p) => self.set_sdk_file(p),
-            None => { self.sdk_file = None; self.sdk_parsed = None; }
+            None => {
+                self.sdk_file = None;
+                self.sdk_parsed = None;
+            }
         }
     }
 
     pub fn set_workspace_root(&mut self, root: PathBuf) {
         self.config = EngineConfig::load(Some(&root));
         self.workspace_root = Some(root);
+        self.invalidate_tabsize_cache();
     }
 
     pub fn include_paths(&self) -> Vec<PathBuf> {
-        if let Some(ref paths) = self.include_paths_override {
-            return paths.clone();
-        }
-        self.config.resolved_include_paths(self.workspace_root.as_deref())
+        self.include_paths_override
+            .as_deref()
+            .map(|paths| paths.to_vec())
+            .unwrap_or_else(|| self.config.resolved_include_paths(self.workspace_root.as_deref()))
+    }
+
+    pub fn invalidate_tabsize_cache(&self) {
+        *self.tabsize_cache.lock().unwrap() = None;
     }
 
     pub fn open_document(&self, uri: String, text: String, version: i32) {
-        let key = uri_to_cache_key(&uri);
-        self.parsed_cache.remove(&key);
+        self.evict_uri_from_cache(&uri);
         self.open_docs.insert(uri, Document { text, version });
     }
 
     pub fn change_document(&self, uri: &str, text: String, version: i32) {
-        let key = uri_to_cache_key(uri);
-        self.parsed_cache.remove(&key);
+        self.evict_uri_from_cache(uri);
+
         if let Some(mut doc) = self.open_docs.get_mut(uri) {
             doc.text = text;
             doc.version = version;
         } else {
             self.open_docs.insert(uri.to_string(), Document { text, version });
         }
+
+        // If an include file changed, also evict every file that depends on it.
+        if let Some(path) = uri_to_path(uri) {
+            self.evict_dependents(&path);
+        }
     }
 
     pub fn close_document(&self, uri: &str) {
         self.open_docs.remove(uri);
-        let key = uri_to_cache_key(uri);
-        self.parsed_cache.remove(&key);
+        self.evict_uri_from_cache(uri);
     }
 
     pub fn get_text(&self, uri: &str) -> Option<String> {
@@ -93,51 +115,150 @@ impl WorkspaceState {
         std::fs::read(&path).ok().map(|b| decode_bytes(&b))
     }
 
-    pub fn get_parsed(&self, uri: &str) -> Option<ParsedFile> {
-        let key = uri_to_cache_key(uri);
-        if let Some(cached) = self.parsed_cache.get(&key) {
-            return Some(cached.value().clone());
+    pub fn get_parsed(&self, uri: &str) -> Option<Arc<ParsedFile>> {
+        let path = uri_to_path(uri)?;
+        if let Some(cached) = self.parsed_cache.get(&path) {
+            return Some(Arc::clone(cached.value()));
         }
         let text = self.get_text(uri)?;
-        let parsed = parse_file(&text);
-        self.parsed_cache.insert(key, parsed.clone());
+        let parsed = Arc::new(parse_file(&text));
+        self.parsed_cache.insert(path, Arc::clone(&parsed));
         Some(parsed)
     }
 
-    pub fn get_parsed_by_path(&self, path: &std::path::Path) -> Option<ParsedFile> {
-        let key = path.to_string_lossy().to_string();
-        if let Some(cached) = self.parsed_cache.get(&key) {
-            return Some(cached.value().clone());
+    pub fn get_parsed_by_path(&self, path: &Path) -> Option<Arc<ParsedFile>> {
+        if let Some(cached) = self.parsed_cache.get(path) {
+            return Some(Arc::clone(cached.value()));
         }
         let bytes = std::fs::read(path).ok()?;
         let text = decode_bytes(&bytes);
-        let parsed = parse_file(&text);
-        self.parsed_cache.insert(key, parsed.clone());
+        let parsed = Arc::new(parse_file(&text));
+        self.parsed_cache.insert(path.to_path_buf(), Arc::clone(&parsed));
         Some(parsed)
+    }
+
+    pub fn open_dependents(&self, uri: &str) -> Vec<String> {
+        let Some(start) = uri_to_path(uri) else { return vec![] };
+        let start = start.canonicalize().unwrap_or(start);
+
+        let mut visited: HashSet<PathBuf> = HashSet::new();
+        let mut queue = std::collections::VecDeque::new();
+        let mut result = Vec::new();
+        queue.push_back(start);
+
+        while let Some(node) = queue.pop_front() {
+            if !visited.insert(node.clone()) {
+                continue;
+            }
+            if let Some(parents) = self.dep_graph.get(&node) {
+                for parent in parents.value() {
+                    if !visited.contains(parent) {
+                        queue.push_back(parent.clone());
+                    }
+                }
+            }
+        }
+
+        for open_uri in self.open_docs.iter().map(|e| e.key().clone()) {
+            if let Some(p) = uri_to_path(&open_uri) {
+                let p = p.canonicalize().unwrap_or(p);
+                if visited.contains(&p) {
+                    result.push(open_uri);
+                }
+            }
+        }
+
+        result
     }
 
     pub fn analyze(&self, uri: &str) -> Vec<PawnDiagnostic> {
         let Some(text) = self.get_text(uri) else { return vec![] };
         let Some(file_path) = uri_to_path(uri) else { return vec![] };
-        let parsed = parse_file(&text);
+
+        if self.config.analysis.suppress_diagnostics_in_inc && is_include_file(&file_path) {
+            return vec![];
+        }
+
+        let parsed = Arc::new(parse_file(&text));
         let inc_paths = self.include_paths();
-        let resolved = collect_included_files(&file_path, &inc_paths, &parsed.includes, 8, 500);
+        let resolved = collect_included_files(&file_path, &inc_paths, &parsed.includes, 16, 1000);
+
+        self.record_dependencies(&resolved.reverse_deps);
+
+        let locale = self.locale;
+        let inc_texts: Vec<&str> = resolved.files.values().map(|e| e.text.as_str()).collect();
+        let global_tabsize = self.cached_tabsize(&inc_paths);
 
         let mut diags = Vec::new();
-        diags.extend(includes::analyze_includes(&parsed.includes, &file_path, &inc_paths, self.workspace_root.as_deref()));
-        diags.extend(semantic::analyze_semantics(&text));
+        diags.extend(includes::analyze_includes(&parsed.includes, &file_path, &inc_paths, self.workspace_root.as_deref(), locale));
+        diags.extend(semantic::analyze_semantics(&text, locale));
         diags.extend(unused::analyze_unused(
             &text, &file_path, &parsed, &resolved,
             self.config.analysis.warn_unused_in_inc,
+            self.workspace_root.as_deref(),
+            locale,
         ));
-        diags.extend(deprecated::analyze_deprecated(&text, &file_path, &parsed, &inc_paths, &resolved));
-        diags.extend(hints::analyze_hints(&text, &parsed.symbols));
-        diags.extend(undefined::analyze_undefined(&text, &file_path, &parsed, &resolved, self.sdk_parsed.as_ref()));
+        diags.extend(deprecated::analyze_deprecated(&text, &file_path, &parsed, &inc_paths, &resolved, locale));
+        diags.extend(hints::analyze_hints(&text, &parsed.symbols, locale));
+        diags.extend(undefined::analyze_undefined(&text, &file_path, &parsed, &resolved, self.sdk_parsed.as_ref(), locale));
+        diags.extend(indentation::analyze_indentation(&text, &inc_texts, global_tabsize, locale));
 
-        let key = uri_to_cache_key(uri);
-        self.parsed_cache.insert(key, parsed);
+        self.parsed_cache.insert(file_path, parsed);
 
         diags
+    }
+
+    // --- private helpers ---
+
+    fn evict_uri_from_cache(&self, uri: &str) {
+        if let Some(path) = uri_to_path(uri) {
+            self.parsed_cache.remove(&path);
+        }
+    }
+
+    pub fn evict_path_from_cache(&self, path: &Path) {
+        let canon = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        self.parsed_cache.remove(&canon);
+        self.evict_dependents(&canon);
+    }
+
+    fn evict_dependents(&self, changed_include: &Path) {
+        let canon = changed_include.canonicalize().unwrap_or_else(|_| changed_include.to_path_buf());
+
+        let mut visited: HashSet<PathBuf> = HashSet::new();
+        let mut queue = std::collections::VecDeque::new();
+        queue.push_back(canon);
+
+        while let Some(node) = queue.pop_front() {
+            if !visited.insert(node.clone()) {
+                continue;
+            }
+            self.parsed_cache.remove(&node);
+            if let Some(dependents) = self.dep_graph.get(&node) {
+                for parent in dependents.value() {
+                    if !visited.contains(parent) {
+                        queue.push_back(parent.clone());
+                    }
+                }
+            }
+        }
+    }
+
+    fn record_dependencies(
+        &self,
+        reverse_deps: &std::collections::HashMap<PathBuf, HashSet<PathBuf>>,
+    ) {
+        for (include_path, parents) in reverse_deps {
+            let mut entry = self.dep_graph.entry(include_path.clone()).or_default();
+            for parent in parents {
+                entry.insert(parent.clone());
+            }
+        }
+    }
+
+    fn cached_tabsize(&self, inc_paths: &[PathBuf]) -> Option<u32> {
+        let mut cache = self.tabsize_cache.lock().unwrap();
+        *cache.get_or_insert_with(|| find_global_tabsize(inc_paths))
     }
 }
 
@@ -153,17 +274,10 @@ pub fn uri_to_path(uri: &str) -> Option<PathBuf> {
     let path = path.trim_start_matches('/');
     let decoded = percent_decode(path);
     let p = PathBuf::from(decoded);
-    // Reject traversal attempts before canonicalization resolves them
     if p.components().any(|c| c == std::path::Component::ParentDir) {
         return None;
     }
     Some(p)
-}
-
-fn uri_to_cache_key(uri: &str) -> String {
-    uri_to_path(uri)
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_else(|| uri.to_string())
 }
 
 fn percent_decode(s: &str) -> String {
@@ -171,7 +285,8 @@ fn percent_decode(s: &str) -> String {
     let bytes = s.as_bytes();
     let mut i = 0;
     while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len()
+        if bytes[i] == b'%'
+            && i + 2 < bytes.len()
             && let Ok(hex) = std::str::from_utf8(&bytes[i + 1..i + 3])
             && let Ok(byte) = u8::from_str_radix(hex, 16)
         {
@@ -185,15 +300,50 @@ fn percent_decode(s: &str) -> String {
     out
 }
 
+fn is_include_file(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|e| e.to_str()),
+        Some("inc") | Some("p") | Some("pawn")
+    )
+}
+
+// tabsize is compiler-global — an include that defines tabsize=4 affects all files
+// compiled after it. We scan include dirs once and cache the result.
+fn find_global_tabsize(inc_paths: &[PathBuf]) -> Option<u32> {
+    let mut result = None;
+    for dir in inc_paths {
+        let Ok(entries) = std::fs::read_dir(dir) else { continue };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+            if !matches!(ext, "inc" | "p" | "pwn") {
+                continue;
+            }
+            let Ok(bytes) = std::fs::read(&path) else { continue };
+            let text = decode_bytes(&bytes);
+            for line in text.lines() {
+                let trimmed = line.trim();
+                if let Some(rest) = trimmed.strip_prefix("#pragma")
+                    && let Some(rest) = rest.trim().strip_prefix("tabsize")
+                    && let Ok(n) = rest.trim().parse::<u32>()
+                {
+                    result = Some(n);
+                }
+            }
+        }
+    }
+    result
+}
+
 fn parse_sdk(path: &PathBuf) -> Option<ParsedFile> {
     let bytes = std::fs::read(path).ok()?;
     let text = decode_bytes(&bytes);
     let mut root = parse_file(&text);
 
-    // Resolve transitive includes so SDK symbols from re-exported files are collected.
     // open.mp.inc itself has almost no symbols — they live in _open_mp and sub-includes.
+    // Resolve transitively so all SDK symbols are visible.
     let inc_paths: Vec<PathBuf> = path.parent().map(|p| vec![p.to_path_buf()]).unwrap_or_default();
-    let resolved = crate::analyzer::includes::collect_included_files(path, &inc_paths, &root.includes, 8, 500);
+    let resolved = collect_included_files(path, &inc_paths, &root.includes, 16, 1000);
 
     for inc_path in &resolved.paths {
         if let Some(entry) = resolved.files.get(inc_path) {

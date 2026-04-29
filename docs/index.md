@@ -1,19 +1,21 @@
-<div align="center">
-  <img src="images/logo.png" alt="PawnPro Engine" />
+<div align="center" markdown>
 
-  [![CI](https://img.shields.io/github/actions/workflow/status/NullSablex/PawnPro-Engine/ci.yml?style=flat-square&label=CI)](https://github.com/NullSablex/PawnPro-Engine/actions)
-  [![Release](https://img.shields.io/github/v/release/NullSablex/PawnPro-Engine?style=flat-square&label=release)](https://github.com/NullSablex/PawnPro-Engine/releases)
-  [![Rust](https://img.shields.io/badge/rust-stable-orange?style=flat-square&logo=rust)](https://www.rust-lang.org)
-  [![LSP](https://img.shields.io/badge/protocolo-LSP-informational?style=flat-square)](https://microsoft.github.io/language-server-protocol/)
-  [![Clippy](https://img.shields.io/github/actions/workflow/status/NullSablex/PawnPro-Engine/ci.yml?style=flat-square&label=Clippy&logo=rust)](https://github.com/NullSablex/PawnPro-Engine/actions/workflows/ci.yml)
-  [![License](https://img.shields.io/badge/licença-Source--Available-blue?style=flat-square)](LICENSE.md)
+![PawnPro Engine](logo.png)
 
-  ![Windows x64](https://img.shields.io/badge/Windows-x64-0078D4?style=flat-square&logo=windows11&logoColor=white)
-  ![Linux x64 · arm64](https://img.shields.io/badge/Linux-x64%20·%20arm64-FCC624?style=flat-square&logo=linux&logoColor=black)
-  ![macOS x64 · arm64](https://img.shields.io/badge/macOS-x64%20·%20arm64-000000?style=flat-square&logo=apple&logoColor=white)
+[![CI](https://img.shields.io/github/actions/workflow/status/NullSablex/PawnPro-Engine/ci.yml?style=flat-square&label=CI)](https://github.com/NullSablex/PawnPro-Engine/actions)
+[![Release](https://img.shields.io/github/v/release/NullSablex/PawnPro-Engine?style=flat-square&label=release)](https://github.com/NullSablex/PawnPro-Engine/releases)
+[![Rust](https://img.shields.io/badge/rust-stable-orange?style=flat-square&logo=rust)](https://www.rust-lang.org)
+[![LSP](https://img.shields.io/badge/protocolo-LSP-informational?style=flat-square)](https://microsoft.github.io/language-server-protocol/)
+[![Clippy](https://img.shields.io/github/actions/workflow/status/NullSablex/PawnPro-Engine/ci.yml?style=flat-square&label=Clippy&logo=rust)](https://github.com/NullSablex/PawnPro-Engine/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/licença-Source--Available-blue?style=flat-square)](https://github.com/NullSablex/PawnPro-Engine/blob/master/LICENSE.md)
+
+![Windows x64](https://img.shields.io/badge/Windows-x64-0078D4?style=flat-square&logo=windows11&logoColor=white)
+![Linux x64 · arm64](https://img.shields.io/badge/Linux-x64%20·%20arm64-FCC624?style=flat-square&logo=linux&logoColor=black)
+![macOS x64 · arm64](https://img.shields.io/badge/macOS-x64%20·%20arm64-000000?style=flat-square&logo=apple&logoColor=white)
+
 </div>
 
-Motor IntelliSense para a linguagem **Pawn** — servidor LSP em Rust integrado à extensão [PawnPro](https://github.com/NullSablex/PawnPro) para Visual Studio Code.
+Motor IntelliSense para a linguagem **Pawn** — servidor LSP em Rust integrado à extensão [PawnPro](https://github.com/NullSablex/PawnPro).
 
 ## O que é
 
@@ -23,7 +25,7 @@ A extensão PawnPro inicia o motor automaticamente ao detectar o binário. Se o 
 
 ## Capacidades
 
-- **Diagnósticos** — 17 códigos `PP####` cobrindo erros de estrutura, código morto, símbolos não declarados, depreciação e indentação (ver [docs/diagnostics.md](docs/diagnostics.md)).
+- **Diagnósticos** — 17 códigos `PP####` cobrindo erros de estrutura, código morto, símbolos não declarados, depreciação e indentação (ver [Diagnósticos](diagnostics.md)).
 - **Completions** — símbolos de todos os includes transitivos com snippets de parâmetros; itens depreciados marcados.
 - **Hover** — assinatura e comentário de documentação; em `#include` mostra o caminho resolvido.
 - **Signature Help** — parâmetro ativo destacado ao digitar `(` e `,`.
@@ -33,7 +35,7 @@ A extensão PawnPro inicia o motor automaticamente ao detectar o binário. Se o 
 - **Formatação** — documento inteiro e seleção de intervalo.
 - **Invalidação granular** — ao salvar um include, o motor republica automaticamente os diagnósticos de todos os arquivos abertos que dependem dele, transitivamente.
 
-Para detalhes do protocolo e das opções de configuração, consulte [docs/lsp.md](docs/lsp.md).
+Para detalhes do protocolo e das opções de configuração, consulte [Protocolo LSP](lsp.md).
 
 ## Plataformas
 
@@ -65,4 +67,4 @@ O binário de debug é detectado automaticamente pela extensão PawnPro se estiv
 ## Licença
 
 PawnPro Engine License v1.0 — Source-Available (não Open Source).  
-Uso pessoal e comercial permitido ✅ · Redistribuição e venda proibidas ❌ · Detalhes: [LICENSE.md](LICENSE.md)
+Uso pessoal e comercial permitido ✅ · Redistribuição e venda proibidas ❌ · Detalhes: [LICENSE.md](https://github.com/NullSablex/PawnPro-Engine/blob/master/LICENSE.md)

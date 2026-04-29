@@ -3,11 +3,13 @@ use std::collections::HashMap;
 use serde_json::json;
 use tower_lsp::lsp_types::*;
 
+use crate::messages::{msg, MsgKey};
 use crate::parser::lexer::strip_line_comments;
 use crate::parser::types::SymbolKind;
 use crate::workspace::WorkspaceState;
 
 pub fn get_code_lens(state: &WorkspaceState, uri: &str) -> Vec<CodeLens> {
+    let locale = state.locale;
     let Some(parsed) = state.get_parsed(uri) else {
         return vec![];
     };
@@ -22,6 +24,7 @@ pub fn get_code_lens(state: &WorkspaceState, uri: &str) -> Vec<CodeLens> {
                     | SymbolKind::Public
                     | SymbolKind::Stock
                     | SymbolKind::Static
+                    | SymbolKind::Plain
             )
         })
         .collect();
@@ -47,9 +50,9 @@ pub fn get_code_lens(state: &WorkspaceState, uri: &str) -> Vec<CodeLens> {
             let refs = total.saturating_sub(1);
 
             let title = match refs {
-                0 => "0 referências".to_string(),
-                1 => "1 referência".to_string(),
-                n => format!("{n} referências"),
+                0 => msg(locale, MsgKey::RefsZero).to_string(),
+                1 => msg(locale, MsgKey::RefsOne).to_string(),
+                n => msg(locale, MsgKey::RefsMany).replace("{n}", &n.to_string()),
             };
 
             let range = Range {

@@ -4,6 +4,7 @@ use std::path::Path;
 use once_cell::sync::Lazy;
 use regex::Regex;
 
+use crate::messages::{msg, Locale, MsgKey};
 use crate::parser::lexer::strip_line_comments;
 use crate::parser::{ParsedFile, SymbolKind};
 
@@ -13,6 +14,13 @@ use super::{codes, diagnostic::PawnDiagnostic};
 static RX_CALL: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"\b(?:([A-Za-z_]\w*)::)?([A-Za-z_]\w*)\s*\(").unwrap()
 });
+
+// Limite de caracteres do compilador real (sNAMEMAX = 31)
+const SNAME_MAX: usize = 31;
+
+fn truncate_name(name: &str) -> &str {
+    if name.len() <= SNAME_MAX { name } else { &name[..SNAME_MAX] }
+}
 
 static RESERVED: Lazy<HashSet<&'static str>> = Lazy::new(|| {
     [
@@ -57,13 +65,15 @@ pub fn analyze_undefined(
     parsed: &ParsedFile,
     resolved: &ResolvedIncludes,
     sdk_parsed: Option<&ParsedFile>,
+    locale: Locale,
 ) -> Vec<PawnDiagnostic> {
-    let is_inc = file_path
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(|e| e.eq_ignore_ascii_case("inc"))
-        .unwrap_or(false);
-    if is_inc {
+    // PP0010 só faz sentido em compilation units (.pwn).
+    // .inc, .p, .pawn são include files — nunca compilados diretamente.
+    let is_include = matches!(
+        file_path.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase()).as_deref(),
+        Some("inc") | Some("p") | Some("pawn")
+    );
+    if is_include {
         return vec![];
     }
 
@@ -80,28 +90,28 @@ pub fn analyze_undefined(
     for p in &sources {
         for sym in &p.symbols {
             if !matches!(sym.kind, SymbolKind::Variable) {
-                known.insert(sym.name.clone());
+                known.insert(truncate_name(&sym.name).to_string());
             }
         }
         for name in &p.macro_names {
-            known.insert(name.clone());
+            known.insert(truncate_name(name).to_string());
         }
         for prefix in &p.func_macro_prefixes {
-            func_prefixes.insert(prefix.clone());
+            func_prefixes.insert(truncate_name(prefix).to_string());
         }
     }
     for fp in &resolved.paths {
         if let Some(entry) = resolved.files.get(fp) {
             for sym in &entry.parsed.symbols {
                 if !matches!(sym.kind, SymbolKind::Variable) {
-                    known.insert(sym.name.clone());
+                    known.insert(truncate_name(&sym.name).to_string());
                 }
             }
             for name in &entry.parsed.macro_names {
-                known.insert(name.clone());
+                known.insert(truncate_name(name).to_string());
             }
             for prefix in &entry.parsed.func_macro_prefixes {
-                func_prefixes.insert(prefix.clone());
+                func_prefixes.insert(truncate_name(prefix).to_string());
             }
         }
     }
@@ -125,13 +135,17 @@ pub fn analyze_undefined(
             let name = cap.get(2).map(|m| m.as_str()).unwrap_or("");
             if name.is_empty() { continue; }
 
-            if RESERVED.contains(name) || known.contains(name) {
+            // Aplica truncagem igual ao compilador real (sNAMEMAX=31)
+            let name_trunc = truncate_name(name);
+
+            if RESERVED.contains(name_trunc) || known.contains(name_trunc) {
                 continue;
             }
 
             if let Some(ns) = namespace {
-                let expanded = format!("{}_{}", ns, name);
-                if known.contains(expanded.as_str()) || known.contains(ns) || func_prefixes.contains(ns) {
+                let ns_trunc = truncate_name(ns);
+                let expanded = format!("{}_{}", ns_trunc, name_trunc);
+                if known.contains(expanded.as_str()) || known.contains(ns_trunc) || func_prefixes.contains(ns_trunc) {
                     continue;
                 }
                 continue; // unknown namespace — macro may use other patterns
@@ -141,7 +155,7 @@ pub fn analyze_undefined(
             diags.push(PawnDiagnostic::warning(
                 line_idx as u32, col, col + name.len() as u32,
                 codes::PP0010,
-                format!("\"{}\" não está declarado — verifique se o include correto está presente", name),
+                msg(locale, MsgKey::SymbolUndeclared).replace("{}", name),
             ));
         }
     }

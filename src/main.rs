@@ -1,6 +1,7 @@
 mod analyzer;
 mod config;
 mod intellisense;
+mod messages;
 mod parser;
 mod server;
 mod workspace;

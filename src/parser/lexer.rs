@@ -1,4 +1,3 @@
-/// Atualiza a profundidade de chaves `{}` para uma linha, ignorando literais string/char.
 pub fn update_brace_depth(line: &str, mut depth: i32) -> i32 {
     let bytes = line.as_bytes();
     let mut in_str = false;
@@ -20,7 +19,6 @@ pub fn update_brace_depth(line: &str, mut depth: i32) -> i32 {
     depth
 }
 
-/// Decodifica bytes como UTF-8, com fallback latin-1 para arquivos Windows-1252.
 pub fn decode_bytes(bytes: &[u8]) -> String {
     match std::str::from_utf8(bytes) {
         Ok(s) => s.to_string(),
@@ -28,7 +26,6 @@ pub fn decode_bytes(bytes: &[u8]) -> String {
     }
 }
 
-/// Retorna `true` se a linha contém `@DEPRECATED` dentro de um comentário `//` ou `/* */`.
 pub fn has_inline_deprecated(raw_line: &str) -> bool {
     if let Some(p) = raw_line.find("//")
         && raw_line[p..].contains("@DEPRECATED") { return true; }
@@ -39,17 +36,13 @@ pub fn has_inline_deprecated(raw_line: &str) -> bool {
     false
 }
 
-/// Resultado do strip de comentários em uma linha.
 #[derive(Debug)]
 pub struct StripResult {
-    /// Texto com comentários substituídos por espaços (preserva colunas).
+    /// substituído por espaços (preserva colunas para manter offsets)
     pub text: String,
-    /// true se a linha termina dentro de um bloco /* ... */
     pub in_block: bool,
 }
 
-/// Strip de comentários `//` e `/* */` em uma linha, preservando posições de coluna.
-/// Strings `"..."` e chars `'...'` são preservados integralmente.
 pub fn strip_line_comments(line: &str, in_block: bool) -> StripResult {
     let bytes = line.as_bytes();
     let len = bytes.len();
@@ -85,9 +78,7 @@ pub fn strip_line_comments(line: &str, in_block: bool) -> StripResult {
             out.push(ch);
             i += 1;
         } else {
-            // fora de qualquer literal ou bloco
             if i + 1 < len && bytes[i] == b'/' && bytes[i + 1] == b'/' {
-                // comentário de linha: preenche o resto com espaços
                 while out.len() < len {
                     out.push(b' ');
                 }
