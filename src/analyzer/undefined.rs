@@ -4,6 +4,7 @@ use std::path::Path;
 use once_cell::sync::Lazy;
 use regex::Regex;
 
+use crate::messages::{msg, Locale, MsgKey};
 use crate::parser::lexer::strip_line_comments;
 use crate::parser::{ParsedFile, SymbolKind};
 
@@ -64,6 +65,7 @@ pub fn analyze_undefined(
     parsed: &ParsedFile,
     resolved: &ResolvedIncludes,
     sdk_parsed: Option<&ParsedFile>,
+    locale: Locale,
 ) -> Vec<PawnDiagnostic> {
     // PP0010 só faz sentido em compilation units (.pwn).
     // .inc, .p, .pawn são include files — nunca compilados diretamente.
@@ -153,7 +155,7 @@ pub fn analyze_undefined(
             diags.push(PawnDiagnostic::warning(
                 line_idx as u32, col, col + name.len() as u32,
                 codes::PP0010,
-                format!("\"{}\" não está declarado — verifique se o include correto está presente", name),
+                msg(locale, MsgKey::SymbolUndeclared).replace("{}", name),
             ));
         }
     }

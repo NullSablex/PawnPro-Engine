@@ -42,7 +42,7 @@ impl EngineConfig {
     }
 
     fn load_global() -> Option<Self> {
-        let home = dirs_home()?;
+        let home = home_dir()?;
         Self::load_from(home.join(".pawnpro").join("config.json")).ok()
     }
 
@@ -51,6 +51,7 @@ impl EngineConfig {
         serde_json::from_str(&text).map_err(|_| ())
     }
 
+    // Project config wins over global — only non-default values propagate.
     fn merge(&mut self, other: Self) {
         if !other.include_paths.is_empty() {
             self.include_paths = other.include_paths;
@@ -66,19 +67,17 @@ impl EngineConfig {
     pub fn resolved_include_paths(&self, workspace_root: Option<&Path>) -> Vec<PathBuf> {
         self.include_paths
             .iter()
-            .map(|p| {
-                let expanded = if let Some(root) = workspace_root {
-                    p.replace("${workspaceFolder}", &root.to_string_lossy())
-                } else {
-                    p.clone()
-                };
+            .map(|raw| {
+                let expanded = workspace_root
+                    .map(|root| raw.replace("${workspaceFolder}", &root.to_string_lossy()))
+                    .unwrap_or_else(|| raw.clone());
                 PathBuf::from(expanded)
             })
             .collect()
     }
 }
 
-fn dirs_home() -> Option<PathBuf> {
+fn home_dir() -> Option<PathBuf> {
     std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
         .map(PathBuf::from)

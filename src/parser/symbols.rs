@@ -6,9 +6,6 @@ use super::{
     types::{IncludeDirective, Param, ParsedFile, Symbol, SymbolKind},
 };
 
-
-// ─── Regex compilados (compilados uma única vez) ───────────────────────────
-
 static RX_DEPRECATED: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"^\s*(?://\s*@DEPRECATED|/\*\s*@DEPRECATED\s*\*/)\s*$").unwrap());
 
@@ -123,9 +120,6 @@ static RESERVED: Lazy<std::collections::HashSet<&'static str>> = Lazy::new(|| {
     .collect()
 });
 
-// ─── Helpers ──────────────────────────────────────────────────────────────
-
-/// Divide parâmetros respeitando parênteses/colchetes aninhados.
 pub fn split_params(raw: &str) -> Vec<String> {
     let mut params = Vec::new();
     let mut cur = String::new();
@@ -169,10 +163,7 @@ pub fn split_params(raw: &str) -> Vec<String> {
     params
 }
 
-/// Extrai nomes de variáveis de um fragmento de declaração `new`/`const`/`static`,
-/// suportando múltiplas variáveis separadas por vírgula e tags opcionais.
-///
-/// `"Tag:a, b[10], Tag:c = 0"` → `["a", "b", "c"]`
+// `"Tag:a, b[10], Tag:c = 0"` → `["a", "b", "c"]`
 fn extract_var_names(raw: &str) -> Vec<String> {
     let raw = raw.trim_end_matches(';').trim();
     let parts = split_params(raw);
@@ -192,7 +183,6 @@ fn extract_var_names(raw: &str) -> Vec<String> {
     names
 }
 
-/// Analisa os parâmetros brutos e retorna Vec<Param>.
 fn parse_params(raw: &str) -> Vec<Param> {
     let parts = split_params(raw);
     let mut params = Vec::new();
@@ -251,7 +241,6 @@ fn parse_params(raw: &str) -> Vec<Param> {
     params
 }
 
-/// Extrai o comentário de documentação acima de uma linha (busca para trás).
 fn extract_doc(lines: &[&str], line_idx: usize) -> Option<String> {
     let mut doc_lines = Vec::new();
     let mut found = false;
@@ -294,11 +283,6 @@ fn extract_doc(lines: &[&str], line_idx: usize) -> Option<String> {
     }
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────
-
-// ─── Helper de símbolo ────────────────────────────────────────────────────
-
-/// Cria um símbolo de função e o adiciona ao ParsedFile.
 #[allow(clippy::too_many_arguments)]
 fn push_func(
     result: &mut ParsedFile,
@@ -324,9 +308,6 @@ fn push_func(
     });
 }
 
-// ─── Parser principal ──────────────────────────────────────────────────────
-
-/// Faz o parse de um arquivo Pawn e retorna os símbolos e includes encontrados.
 pub fn parse_file(text: &str) -> ParsedFile {
     let mut result = ParsedFile::default();
     let raw_lines: Vec<&str> = text.split('\n').collect();
@@ -334,27 +315,22 @@ pub fn parse_file(text: &str) -> ParsedFile {
     let mut in_block = false;
     let mut depth: i32 = 0;
     let mut pending_deprecated = false;
-    // Candidato de função simples pendente quando { ainda não apareceu na linha
-    // (line_idx, col, name, params_raw, deprecated, doc, kind)
+    // Função cuja `{` ainda não apareceu (pode estar na linha seguinte)
     #[allow(clippy::type_complexity)]
     let mut pending_plain: Option<(u32, u32, String, String, bool, Option<String>, SymbolKind)> = None;
-    // Função com assinatura multi-linha: params acumulados entre ( ... )
-    // (line_idx, col, name, params_buf, kind, deprecated, doc)
+    // Parâmetros acumulados de assinatura multi-linha entre `(` ... `)`
     #[allow(clippy::type_complexity)]
     let mut multiline_func: Option<(u32, u32, String, String, SymbolKind, bool, Option<String>)> = None;
-    // true quando estamos dentro de uma declaração multi-linha: static stock\n  var1,\n  var2;
     let mut in_multi_var_decl = false;
-    // controle de corpo de enum
     let mut in_enum = false;
     let mut pending_enum_open = false;
-    // Namespace alias com continuação de linha: `#define NS:: \` → próxima linha tem o alias
+    // `#define NS:: \` — alias está na linha seguinte
     let mut pending_ns_alias: Option<String> = None;
 
     for (line_idx, raw_line) in raw_lines.iter().enumerate() {
-        // Remove \r do final (Windows line endings)
         let raw_line = raw_line.trim_end_matches('\r');
 
-        // Verifica @DEPRECATED ANTES do strip (o comentário está no rawLine)
+        // @DEPRECATED deve ser verificado no rawLine, antes do strip
         if RX_DEPRECATED.is_match(raw_line) {
             pending_deprecated = true;
             let stripped = strip_line_comments(raw_line, in_block);
@@ -368,7 +344,6 @@ pub fn parse_file(text: &str) -> ParsedFile {
         let line = &stripped.text;
         let trimmed = line.trim();
 
-        // Acumula parâmetros de função com assinatura multi-linha
         if let Some(ref mut mf) = multiline_func {
             if let Some(close_pos) = line.find(')') {
                 let partial = line[..close_pos].trim();
@@ -399,7 +374,6 @@ pub fn parse_file(text: &str) -> ParsedFile {
             continue;
         }
 
-        // Resolve namespace alias de continuação: linha anterior tinha `#define NS:: \`
         if let Some(ns) = pending_ns_alias.take() {
             let alias = trimmed.split_whitespace().next().unwrap_or("").trim_end_matches('\\').trim();
             if !alias.is_empty() && alias.chars().next().map(|c| c.is_alphanumeric() || c == '_').unwrap_or(false) {
@@ -410,7 +384,6 @@ pub fn parse_file(text: &str) -> ParsedFile {
         }
 
         if trimmed.is_empty() {
-            // linha vazia: mantém pending_deprecated
             depth = update_brace_depth(line, depth);
             continue;
         }
@@ -418,12 +391,10 @@ pub fn parse_file(text: &str) -> ParsedFile {
         let top_level = depth == 0;
 
         if top_level {
-            // ── Enum fechou: depth voltou a 0 ────────────────────────────────────
             if in_enum {
                 in_enum = false;
             }
 
-            // ── Abertura de enum pendente (enum Name\n{) ─────────────────────────
             if pending_enum_open {
                 if trimmed.starts_with('{') {
                     in_enum = true;
@@ -435,7 +406,6 @@ pub fn parse_file(text: &str) -> ParsedFile {
                 pending_enum_open = false; // linha inesperada, abandona
             }
 
-            // ── Declarações multi-linha: static stock\n  Tag:var = val,\n  ...; ──
             if in_multi_var_decl {
                 pending_plain = None;
                 for name in extract_var_names(trimmed) {
@@ -460,14 +430,12 @@ pub fn parse_file(text: &str) -> ParsedFile {
                 continue;
             }
 
-            // ── Início de declaração multi-linha (static stock / static / new isolados) ─
             if matches!(trimmed, "static" | "static stock" | "new") {
                 in_multi_var_decl = true;
                 depth = update_brace_depth(line, depth);
                 continue;
             }
 
-            // Resolve candidato de função simples cuja { aparece nesta linha
             if let Some((pidx, pcol, pname, pparams, pdep, pdoc, pkind)) = pending_plain.take()
                 && trimmed.starts_with('{') {
                 let params = parse_params(&pparams);
@@ -485,12 +453,10 @@ pub fn parse_file(text: &str) -> ParsedFile {
                 continue;
             }
 
-            // Válido apenas em maiúsculas e dentro de comentário (// ou /* */)
             let inline_deprecated = has_inline_deprecated(raw_line);
             let deprecated = pending_deprecated || inline_deprecated;
             pending_deprecated = false;
 
-            // #include / #tryinclude
             if let Some(cap) = RX_INCLUDE.captures(line) {
                 let is_try = cap.get(1).is_some();
                 let (token, is_angle) = if let Some(m) = cap.get(2) {
@@ -510,9 +476,7 @@ pub fn parse_file(text: &str) -> ParsedFile {
                 continue;
             }
 
-            // enum — captura nome e membros
             if let Some(enum_cap) = RX_ENUM.captures(line) {
-                // Nome do enum como tipo/tag — kind dedicado para hover correto
                 let enum_name = enum_cap.get(1).map(|m| m.as_str()).unwrap_or("");
                 if !enum_name.is_empty() && !RESERVED.contains(enum_name) {
                     let col = raw_line.find(enum_name).unwrap_or(0) as u32;
@@ -524,7 +488,6 @@ pub fn parse_file(text: &str) -> ParsedFile {
                         line: line_idx as u32, col,
                     });
                 }
-                // Enum numa única linha: enum { A, B, C } ou enum Name { A, B }
                 if let Some(open) = line.find('{') {
                     let body_start = open + 1;
                     let body_end = line[body_start..].find('}')
@@ -532,7 +495,6 @@ pub fn parse_file(text: &str) -> ParsedFile {
                         .unwrap_or(line.len());
                     let members_str = &line[body_start..body_end];
                     if members_str.trim().is_empty() {
-                        // Corpo está nas linhas seguintes
                         in_enum = true;
                     } else {
                         for name in extract_var_names(members_str) {
@@ -547,7 +509,6 @@ pub fn parse_file(text: &str) -> ParsedFile {
                                 });
                             }
                         }
-                        // Se `}` não fecha a linha, ainda pode haver mais membros
                         if !line[open..].contains('}') {
                             in_enum = true;
                         }
@@ -559,13 +520,11 @@ pub fn parse_file(text: &str) -> ParsedFile {
                 continue;
             }
 
-            // #define
             if let Some(cap) = RX_DEFINE.captures(line) {
                 let name = cap[1].to_string();
                 let body = cap.get(2).map(|m| m.as_str()).unwrap_or("");
                 let col = raw_line.find(&name).unwrap_or(0) as u32;
 
-                // Detecta macros geradoras de função (BPLR::, CMD:, CALLBACK::, etc.)
                 let is_func_macro = RX_MACRO_PREFIX.is_match(line) && {
                     let b = body.to_ascii_lowercase();
                     b.contains("forward") || b.contains("public")
@@ -576,7 +535,6 @@ pub fn parse_file(text: &str) -> ParsedFile {
                     result.deprecated_macros.push(name.clone());
                 }
                 if is_func_macro {
-                    // Não expõe como símbolo (evita "#define BPLR" nas completions)
                     if !result.func_macro_prefixes.contains(&name) {
                         result.func_macro_prefixes.push(name);
                     }
@@ -603,7 +561,6 @@ pub fn parse_file(text: &str) -> ParsedFile {
                 continue;
             }
 
-            // native
             if let Some(cap) = RX_NATIVE.captures(line) {
                 let params_raw = cap.get(2).map(|m| m.as_str()).unwrap_or("");
                 push_func(&mut result, &raw_lines, raw_line, line_idx, cap[1].to_string(), params_raw, SymbolKind::Native, deprecated);
@@ -611,7 +568,6 @@ pub fn parse_file(text: &str) -> ParsedFile {
                 continue;
             }
 
-            // forward
             if let Some(cap) = RX_FORWARD.captures(line) {
                 let params_raw = cap.get(2).map(|m| m.as_str()).unwrap_or("");
                 push_func(&mut result, &raw_lines, raw_line, line_idx, cap[1].to_string(), params_raw, SymbolKind::Forward, deprecated);
@@ -619,7 +575,6 @@ pub fn parse_file(text: &str) -> ParsedFile {
                 continue;
             }
 
-            // public / stock (incluindo "public stock" e "stock public")
             if let Some(cap) = RX_PUBLIC_STOCK.captures(line) {
                 let kind = if &cap[1] == "public" { SymbolKind::Public } else { SymbolKind::Stock };
                 let namespace_raw = cap.get(2).map(|m| m.as_str()).unwrap_or(""); // ex: "DOF2::"
@@ -643,7 +598,6 @@ pub fn parse_file(text: &str) -> ParsedFile {
                 continue;
             }
 
-            // static const (deve vir antes de static func)
             if let Some(cap) = RX_STATIC_CONST.captures(line) {
                 let name = cap[1].to_string();
                 let col = raw_line.find(&name).unwrap_or(0) as u32;
@@ -661,7 +615,6 @@ pub fn parse_file(text: &str) -> ParsedFile {
                 continue;
             }
 
-            // stock const (deve vir antes de static stock func)
             if let Some(cap) = RX_STOCK_CONST.captures(line) {
                 let name = cap[1].to_string();
                 let col = raw_line.find(&name).unwrap_or(0) as u32;
@@ -679,7 +632,6 @@ pub fn parse_file(text: &str) -> ParsedFile {
                 continue;
             }
 
-            // static stock function (deve vir antes de static function)
             if let Some(cap) = RX_STATIC_STOCK_FUNC.captures(line) {
                 let params_raw = cap.get(2).map(|m| m.as_str()).unwrap_or("");
                 push_func(&mut result, &raw_lines, raw_line, line_idx, cap[1].to_string(), params_raw, SymbolKind::Stock, deprecated);
@@ -687,7 +639,6 @@ pub fn parse_file(text: &str) -> ParsedFile {
                 continue;
             }
 
-            // static function
             if let Some(cap) = RX_STATIC_FUNC.captures(line) {
                 let params_raw = cap.get(2).map(|m| m.as_str()).unwrap_or("");
                 push_func(&mut result, &raw_lines, raw_line, line_idx, cap[1].to_string(), params_raw, SymbolKind::Static, deprecated);
@@ -695,7 +646,6 @@ pub fn parse_file(text: &str) -> ParsedFile {
                 continue;
             }
 
-            // float/bool Name(params) — com tipo de retorno sem ":"
             if let Some(cap) = RX_FLOAT_BOOL_FUNC.captures(line) {
                 let name = cap[2].to_string();
                 let params_raw = cap.get(3).map(|m| m.as_str()).unwrap_or("");
@@ -711,9 +661,7 @@ pub fn parse_file(text: &str) -> ParsedFile {
                 continue;
             }
 
-            // Funções sem keyword / com namespace (fallback — após todos os padrões keyword)
             if let Some(cap) = RX_PLAIN_FUNC.captures(line) {
-                let _ns_raw = cap.get(1).map(|m| m.as_str()).unwrap_or(""); // ex: "BPLR::"
                 let name = cap[2].to_string();
                 if !RESERVED.contains(name.as_str()) {
                     let params_raw = cap.get(3).map(|m| m.as_str()).unwrap_or("");
@@ -736,8 +684,6 @@ pub fn parse_file(text: &str) -> ParsedFile {
                 }
             }
 
-            // Fallback multi-linha: qualquer declaração com ( sem ) na mesma linha
-            // Cobre stock, public, static, native, forward e funções plain
             if line.contains('(') && !line.contains(')')
                 && let Some(cap) = RX_FUNC_OPEN.captures(line)
             {
@@ -769,7 +715,6 @@ pub fn parse_file(text: &str) -> ParsedFile {
                 }
             }
 
-            // Variáveis: new/const com suporte a múltiplas declarações (new a, b, c)
             if let Some(cap) = RX_NEW_DECL.captures(line) {
                 let is_const = line.trim_start().to_ascii_lowercase().starts_with("const");
                 let kind = if is_const { SymbolKind::Const } else { SymbolKind::Variable };
@@ -790,7 +735,6 @@ pub fn parse_file(text: &str) -> ParsedFile {
                 }
             }
 
-            // static como variável: static [Tag:]name = ...
             if let Some(cap) = RX_STATIC_VAR.captures(line) {
                 let name = cap[1].to_string();
                 if !RESERVED.contains(name.as_str()) {
@@ -808,11 +752,9 @@ pub fn parse_file(text: &str) -> ParsedFile {
                 }
             }
         } else {
-            // dentro de bloco: qualquer linha não-vazia reseta flags de declaração
             pending_deprecated = false;
             in_multi_var_decl = false;
 
-            // ── Membros de enum (depth == 1, dentro do corpo do enum) ────────────
             if in_enum && depth == 1 && !trimmed.starts_with('}') && !trimmed.starts_with('{')
                 && let Some(cap) = RX_ENUM_MEMBER.captures(trimmed) {
                 let name = cap[1].to_string();
@@ -932,15 +874,15 @@ mod tests {
     fn parses_enum_name() {
         let src = "enum dItEnum\n{\n    ObjtID,\n    droptTimer\n};";
         let f = parse_file(src);
-        // O nome do enum deve ser registrado como StaticConst (usado como tag/tipo)
-        assert!(f.symbols.iter().any(|s| s.name == "dItEnum" && matches!(s.kind, SymbolKind::StaticConst)));
+        // O nome do enum é registrado com SymbolKind::Enum (kind dedicado)
+        assert!(f.symbols.iter().any(|s| s.name == "dItEnum" && matches!(s.kind, SymbolKind::Enum)));
     }
 
     #[test]
     fn parses_enum_name_with_tag() {
         let src = "enum E_ZONES: { E_ZONE_ID, E_ZONE_NAME }";
         let f = parse_file(src);
-        assert!(f.symbols.iter().any(|s| s.name == "E_ZONES" && matches!(s.kind, SymbolKind::StaticConst)));
+        assert!(f.symbols.iter().any(|s| s.name == "E_ZONES" && matches!(s.kind, SymbolKind::Enum)));
     }
 
     #[test]

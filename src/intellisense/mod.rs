@@ -60,7 +60,7 @@ pub(crate) fn collect_all_symbols(
         if let Some(entry) = resolved.files.get(inc_path) {
             all.extend(entry.parsed.symbols.clone());
         } else if let Some(inc_parsed) = state.get_parsed_by_path(inc_path) {
-            all.extend(inc_parsed.symbols);
+            all.extend(inc_parsed.symbols.clone());
         }
     }
     all

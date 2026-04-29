@@ -5,6 +5,7 @@ use regex::Regex;
 use tower_lsp::lsp_types::*;
 
 use crate::analyzer::includes::resolve_include;
+use crate::messages::{msg, MsgKey};
 use crate::parser::types::{IncludeDirective, Symbol, SymbolKind};
 use crate::workspace::WorkspaceState;
 
@@ -15,6 +16,7 @@ static RX_INCLUDE: Lazy<Regex> = Lazy::new(|| {
 });
 
 pub fn get_hover(state: &WorkspaceState, uri: &str, position: Position) -> Option<Hover> {
+    let locale = state.locale;
     let text = state.get_text(uri)?;
     let file_path = crate::workspace::uri_to_path(uri)?;
     let inc_paths = state.include_paths();
@@ -37,7 +39,7 @@ pub fn get_hover(state: &WorkspaceState, uri: &str, position: Position) -> Optio
     let all_syms = collect_all_symbols(state, &file_path, &inc_paths, &parsed);
     let sym = all_syms.iter().find(|s| s.name == word)?;
 
-    Some(format_symbol(sym))
+    Some(format_symbol(sym, locale))
 }
 
 fn hover_include(
@@ -68,7 +70,7 @@ fn hover_include(
     })
 }
 
-fn format_symbol(sym: &Symbol) -> Hover {
+fn format_symbol(sym: &Symbol, locale: crate::messages::Locale) -> Hover {
     let kw = match sym.kind {
         SymbolKind::Native => "native",
         SymbolKind::Forward => "forward",
@@ -96,7 +98,7 @@ fn format_symbol(sym: &Symbol) -> Hover {
     };
 
     if sym.deprecated {
-        md.push_str("\n\n> ⚠️ **Deprecated**");
+        md.push_str(&format!("\n\n> {}", msg(locale, MsgKey::HoverDeprecated)));
     }
 
     if let Some(doc) = &sym.doc {

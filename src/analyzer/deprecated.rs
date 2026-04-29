@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use once_cell::sync::Lazy;
 use regex::Regex;
 
+use crate::messages::{msg, Locale, MsgKey};
 use crate::parser::lexer::{has_inline_deprecated, strip_line_comments};
 use crate::parser::types::IncludeDirective;
 use crate::parser::{ParsedFile, SymbolKind};
@@ -30,6 +31,7 @@ pub fn analyze_deprecated(
     parsed: &ParsedFile,
     include_paths: &[PathBuf],
     resolved: &ResolvedIncludes,
+    locale: Locale,
 ) -> Vec<PawnDiagnostic> {
     let mut diags = Vec::new();
     let lines: Vec<&str> = text.split('\n').collect();
@@ -65,7 +67,7 @@ pub fn analyze_deprecated(
                 diags.push(PawnDiagnostic::warning(
                     line_idx as u32, col, col + token.len() as u32,
                     codes::PP0008,
-                    format!("\"{}\" está depreciado", token),
+                    msg(locale, MsgKey::IncludeDeprecated).replace("{}", token),
                 ));
                 if let Some(resolved_path) = resolve_include(&dir, file_dir, include_paths) {
                     let canon = resolved_path.canonicalize().unwrap_or(resolved_path);
@@ -140,7 +142,7 @@ pub fn analyze_deprecated(
         diags.push(PawnDiagnostic::deprecated_decl(
             sym.line, sym.col, col_end,
             codes::PP0007,
-            format!("\"{}\" está marcado como depreciado", sym.name),
+            msg(locale, MsgKey::SymDeprecated).replace("{}", &sym.name),
         ));
     }
 
@@ -165,7 +167,7 @@ pub fn analyze_deprecated(
                     diags.push(PawnDiagnostic::deprecated_warning(
                         line_idx as u32, col, col + name.len() as u32,
                         codes::PP0007,
-                        dep_msg(name, kind),
+                        dep_msg(name, kind, locale),
                     ));
                 }
             }
@@ -179,7 +181,7 @@ pub fn analyze_deprecated(
                     diags.push(PawnDiagnostic::deprecated_warning(
                         line_idx as u32, col, col + name.len() as u32,
                         codes::PP0007,
-                        dep_msg(name, kind),
+                        dep_msg(name, kind, locale),
                     ));
                 }
             }
@@ -203,9 +205,9 @@ fn classify_sym(
     }
 }
 
-fn dep_msg(name: &str, kind: &DepKind) -> String {
+fn dep_msg(name: &str, kind: &DepKind, locale: Locale) -> String {
     match kind {
-        DepKind::Individual => format!("\"{}\" está depreciado", name),
-        DepKind::FromFile   => format!("\"{}\" pertence a um include depreciado", name),
+        DepKind::Individual => msg(locale, MsgKey::SymDeprecatedUsage).replace("{}", name),
+        DepKind::FromFile   => msg(locale, MsgKey::SymFromDeprecatedFile).replace("{}", name),
     }
 }

@@ -1,6 +1,7 @@
 use once_cell::sync::Lazy;
 use regex::Regex;
 
+use crate::messages::{msg, Locale, MsgKey};
 use crate::parser::lexer::{strip_line_comments, update_brace_depth};
 
 use super::{codes, diagnostic::PawnDiagnostic};
@@ -26,7 +27,7 @@ fn next_nonempty_starts_brace(lines: &[&str], from: usize) -> bool {
     false
 }
 
-pub fn analyze_semantics(text: &str) -> Vec<PawnDiagnostic> {
+pub fn analyze_semantics(text: &str, locale: Locale) -> Vec<PawnDiagnostic> {
     let mut diags = Vec::new();
     let lines: Vec<&str> = text.split('\n').collect();
     let mut in_block = false;
@@ -49,7 +50,7 @@ pub fn analyze_semantics(text: &str) -> Vec<PawnDiagnostic> {
                     diags.push(PawnDiagnostic::error(
                         line_idx as u32, col, col + name.len() as u32,
                         codes::PP0002,
-                        format!("Função native \"{}\" não pode ter corpo", name),
+                        msg(locale, MsgKey::NativeHasBody).replace("{}", name),
                     ));
                 }
             } else if let Some(cap) = RX_FORWARD.captures(line) {
@@ -62,7 +63,7 @@ pub fn analyze_semantics(text: &str) -> Vec<PawnDiagnostic> {
                     diags.push(PawnDiagnostic::error(
                         line_idx as u32, col, col + name.len() as u32,
                         codes::PP0003,
-                        format!("Declaração forward \"{}\" não pode ter corpo", name),
+                        msg(locale, MsgKey::ForwardHasBody).replace("{}", name),
                     ));
                 }
             } else if let Some(cap) = RX_PUBLIC_STOCK.captures(line) {
@@ -73,10 +74,12 @@ pub fn analyze_semantics(text: &str) -> Vec<PawnDiagnostic> {
                     || (terminator.is_empty() && !next_nonempty_starts_brace(&lines, line_idx));
                 if no_body {
                     let col = raw_line.find(name).unwrap_or(0) as u32;
+                    let template = msg(locale, MsgKey::DeclNoBody);
+                    let message = template.replacen("{}", kw, 1).replacen("{}", name, 1);
                     diags.push(PawnDiagnostic::warning(
                         line_idx as u32, col, col + name.len() as u32,
                         codes::PP0004,
-                        format!("Declaração {} \"{}\" sem corpo. Use \"forward\" para protótipos.", kw, name),
+                        message,
                     ));
                 }
             }

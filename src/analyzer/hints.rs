@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use once_cell::sync::Lazy;
 use regex::Regex;
 
+use crate::messages::{msg, Locale, MsgKey};
 use crate::parser::lexer::strip_line_comments;
 use crate::parser::types::{Symbol, SymbolKind};
 
@@ -10,7 +11,7 @@ use super::{codes, diagnostic::PawnDiagnostic};
 
 static RX_WORD: Lazy<Regex> = Lazy::new(|| Regex::new(r"\b([A-Za-z_]\w*)\b").unwrap());
 
-pub fn analyze_hints(text: &str, symbols: &[Symbol]) -> Vec<PawnDiagnostic> {
+pub fn analyze_hints(text: &str, symbols: &[Symbol], locale: Locale) -> Vec<PawnDiagnostic> {
     let mut diags = Vec::new();
 
     let funcs: Vec<&Symbol> = symbols
@@ -46,7 +47,7 @@ pub fn analyze_hints(text: &str, symbols: &[Symbol]) -> Vec<PawnDiagnostic> {
                     col,
                     col + param.name.len() as u32,
                     codes::PP0009,
-                    format!("Parâmetro \"{}\" declarado mas não utilizado", param.name),
+                    msg(locale, MsgKey::ParamUnused).replace("{}", &param.name),
                 ));
             }
         }

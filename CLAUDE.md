@@ -2,7 +2,7 @@
 
 ## O que é este projeto
 
-Servidor LSP em Rust para a linguagem **Pawn** (SA-MP / open.mp). Comunica-se com a extensão VS Code [PawnPro](https://github.com/NullSablex/PawnPro) via stdin/stdout usando o Language Server Protocol.
+Servidor LSP em Rust para a linguagem **Pawn** (SA-MP / open.mp). Comunica-se com a extensão [PawnPro](https://github.com/NullSablex/PawnPro) via stdin/stdout usando o Language Server Protocol.
 
 ---
 
@@ -14,6 +14,8 @@ Servidor LSP em Rust para a linguagem **Pawn** (SA-MP / open.mp). Comunica-se co
 - **Nunca interpolar input do usuário diretamente em `Regex::new`** sem escapar metacaracteres.
 - **`cargo clippy -- -D warnings` deve passar sem erros** antes de qualquer commit.
 - **Novos diagnósticos sempre em `analyzer/codes.rs`** com constante `pub const PP####`.
+- **`parsed_cache` usa `PathBuf` como chave**, não `String` (URI). Converter URI → path antes de acessar.
+- **Sem comentários óbvios**. Apenas comentários que explicam *por quê* — restrições ocultas, invariantes sutis, workarounds de bugs específicos.
 
 ---
 
@@ -55,24 +57,43 @@ src/
 
 ## Tipos centrais
 
+### `WorkspaceState` (`workspace.rs`)
+```rust
+pub struct WorkspaceState {
+    pub parsed_cache: DashMap<PathBuf, Arc<ParsedFile>>,
+    pub dep_graph: DashMap<PathBuf, HashSet<String>>,  // include_path → URIs que dependem dele
+    pub tabsize_cache: Mutex<Option<Option<u32>>>,
+    // ...
+}
+```
+- `parsed_cache` usa `PathBuf` como chave — **nunca String/URI**.
+- `dep_graph` é o grafo reverso de dependências: permite invalidar só os arquivos afetados quando um include muda.
+- `tabsize_cache` usa `Mutex` para interior mutability em `&self`.
+
 ### `ParsedFile` (`parser/types.rs`)
-Resultado do parsing de um arquivo. Contém:
+Armazenado como `Arc<ParsedFile>` no cache. Contém:
 - `symbols: Vec<Symbol>` — todas as declarações
 - `includes: Vec<IncludeDirective>` — todas as diretivas `#include` / `#tryinclude`
-- `macro_names: Vec<String>` — nomes de `#define` (subconjunto de symbols)
+- `macro_names: Vec<String>` — nomes de `#define`
 - `deprecated_macros: Vec<String>` — macros marcadas com `@DEPRECATED`
-- `func_macro_prefixes: Vec<String>` — prefixos como `CMD`, `BPR` que geram `forward`/`public`
-- `namespace_aliases: HashMap<String, String>` — ex: `"DOF2"` → `"DOF2_"`
+- `func_macro_prefixes: Vec<String>` — prefixos como `CMD`, `BPR`
+- `namespace_aliases: HashMap<String, String>`
+
+### `ResolvedIncludes` (`analyzer/includes.rs`)
+```rust
+pub struct ResolvedIncludes {
+    pub paths: Vec<PathBuf>,
+    pub files: HashMap<PathBuf, IncludeEntry>,
+    pub reverse_deps: HashMap<PathBuf, HashSet<PathBuf>>,
+}
+```
+`reverse_deps` é construído durante a resolução BFS e usado por `record_dependencies` em `workspace.rs` para atualizar `dep_graph`.
 
 ### `Symbol` (`parser/types.rs`)
 - `kind: SymbolKind` — `Native | Forward | Public | Stock | Static | StaticConst | Define | Variable`
 - `deprecated: bool` — marcado com `@DEPRECATED`
 - `doc: Option<String>` — comentário de documentação acima da declaração
 - `line: u32`, `col: u32` — posição 0-based em bytes UTF-8
-
-### `IncludeDirective` (`parser/types.rs`)
-- `is_angle: bool` — `true` para `<token>`, `false` para `"caminho"`
-- `is_try: bool` — `true` para `#tryinclude` (ausência não é erro)
 
 ### `PawnDiagnostic` (`analyzer/diagnostic.rs`)
 Construtores disponíveis:
@@ -83,16 +104,31 @@ Construtores disponíveis:
 - `::deprecated_decl(...)` — Warning + `deprecated: true` (na própria declaração)
 - `::deprecated_warning(...)` — Warning + `deprecated: true` (nos usos)
 
+### `ConfigUpdate` (`server.rs`)
+Struct extraída para eliminar duplicação entre `initialize` e `did_change_configuration`:
+- `from_init_options(value)` — lê de `initializationOptions`
+- `from_settings(value)` — lê de `workspace/didChangeConfiguration`
+- `apply_init(&mut config)` — aplica campos relevantes ao init
+- `apply_change(&mut config)` — aplica campos relevantes à atualização
+
 ---
 
 ## Fluxo de análise (`workspace.rs`)
 
 Para cada arquivo aberto ou alterado:
 1. `decode_bytes(bytes)` — decodifica UTF-8 com fallback latin-1
-2. `parse_file(text, path)` — extrai `ParsedFile`
-3. `resolve_includes(parsed, path, include_paths)` — resolve recursivamente todos os includes transitivos → `ResolvedIncludes`
-4. Cada analyzer recebe `(text, path, parsed, resolved)` e retorna `Vec<PawnDiagnostic>`
-5. Diagnósticos publicados via `client.publish_diagnostics()`
+2. `parse_file(text, path)` — extrai `ParsedFile`, armazena como `Arc<ParsedFile>` em `parsed_cache`
+3. `resolve_includes(parsed, path, include_paths)` — resolve recursivamente todos os includes transitivos → `ResolvedIncludes` (inclui `reverse_deps`)
+4. `record_dependencies(uri, &resolved.reverse_deps)` — atualiza `dep_graph`
+5. Cada analyzer recebe `(text, path, parsed, resolved)` e retorna `Vec<PawnDiagnostic>`
+6. Diagnósticos publicados via `client.publish_diagnostics()`
+
+### Invalidação granular de cache
+Quando um include é modificado (`change_document`):
+- `evict_uri_from_cache(uri)` — remove o próprio arquivo do `parsed_cache`
+- `evict_dependents(uri)` — percorre `dep_graph` e remove do cache apenas os arquivos que dependem desse include
+
+Isso evita invalidar o cache inteiro quando só um include muda.
 
 ---
 
@@ -133,12 +169,14 @@ Funções utilitárias canônicas — **não duplicar em outros módulos**:
 pub struct EngineConfig {
     pub include_paths: Vec<PathBuf>,
     pub warn_unused_in_inc: bool,
+    pub suppress_diagnostics_in_inc: bool,
     pub sdk_file_path: Option<PathBuf>,
     pub workspace_folder: Option<PathBuf>,
+    pub locale: Locale,
 }
 ```
 
-Recebida em `initializationOptions` e atualizada via `workspace/didChangeConfiguration`.
+Recebida em `initializationOptions` e atualizada via `workspace/didChangeConfiguration`. Ambos os caminhos usam `ConfigUpdate` — não duplicar lógica de parsing entre eles.
 
 ---
 
@@ -161,3 +199,7 @@ cargo clippy -- -D warnings    # deve passar sem erros
 - PP0011/PP0012/PP0013 são emitidos como Hint, não Warning — evitar ruído em bibliotecas.
 - `is_try: false` deve ser definido explicitamente em todos os literais `IncludeDirective` fora do parser.
 - Semantic tokens detectam chamadas multiline: olham até 3 linhas adiante por `(`.
+- `deprecated_decl` usa `deprecated: true` — isso ativa o strikethrough no editor via `DiagnosticTag::DEPRECATED`. Não usar `warning` simples para declarações depreciadas.
+- `Arc<ParsedFile>`: ao estender símbolos de um include, usar `.clone()` — `all.extend(inc_parsed.symbols.clone())`.
+- `unused.rs` usa `collect_workspace_all()` — função única que faz um único walkdir em vez de três chamadas separadas a `collect_workspace()`.
+- `open_docs` na engine guarda a chave como URI completa (`file:///...`). Nunca fazer `format!("file://{}", key)` — já tem o prefixo.
