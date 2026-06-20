@@ -54,8 +54,8 @@ pub struct ParsedFile {
     pub includes: Vec<IncludeDirective>,
     pub macro_names: Vec<String>,
     pub deprecated_macros: Vec<String>,
-    /// ex: ["BPR", "CMD"] — macros cujo corpo contém `forward` ou `public`
+    /// ex: `["CMD", "FN"]` — macros cujo corpo contém `forward` ou `public`
     pub func_macro_prefixes: Vec<String>,
-    /// "DOF2" → "DOF2_"; detectado de `#define NAMESPACE:: PREFIX_`
+    /// `NS` → `NS_`; detectado de `#define NS:: NS_`
     pub namespace_aliases: std::collections::HashMap<String, String>,
 }

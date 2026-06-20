@@ -1,3 +1,7 @@
 /target
 /site
 .claude
+
+# Planos / roadmap internos — não publicados
+/ROADMAP.md
+/docs/debugger-plan.md

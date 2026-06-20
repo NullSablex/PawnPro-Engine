@@ -4,6 +4,7 @@ pub mod diagnostic;
 pub mod hints;
 pub mod includes;
 pub mod indentation;
+pub mod naming;
 pub mod semantic;
 pub mod undefined;
 pub mod unused;

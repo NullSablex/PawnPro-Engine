@@ -5,12 +5,14 @@ use std::sync::{Arc, Mutex};
 use dashmap::DashMap;
 
 use crate::analyzer::PawnDiagnostic;
-use crate::analyzer::{deprecated, hints, includes, indentation, semantic, undefined, unused};
 use crate::analyzer::includes::collect_included_files;
+use crate::analyzer::{
+    deprecated, hints, includes, indentation, naming, semantic, undefined, unused,
+};
 use crate::config::EngineConfig;
 use crate::messages::Locale;
-use crate::parser::{parse_file, ParsedFile};
 use crate::parser::lexer::decode_bytes;
+use crate::parser::{ParsedFile, parse_file};
 
 #[derive(Debug, Clone)]
 pub struct Document {
@@ -28,9 +30,14 @@ pub struct WorkspaceState {
     pub dep_graph: DashMap<PathBuf, HashSet<PathBuf>>,
     // tabsize is compiler-global — a single `#pragma tabsize N` in any included file
     // affects all files compiled after it, so we cache the value workspace-wide.
+    // `Option<Option<u32>>` é memoização: outer = "já computado?", inner = "tem valor?".
+    #[allow(clippy::option_option)]
     pub tabsize_cache: Mutex<Option<Option<u32>>>,
     pub sdk_file: Option<PathBuf>,
     pub sdk_parsed: Option<ParsedFile>,
+    /// Estilo de formatação configurado (preset + overrides). O `tab_size` e o
+    /// `insert_spaces` reais vêm do editor por chamada e são aplicados sobre este.
+    pub format_style: crate::intellisense::FormatStyle,
 }
 
 impl WorkspaceState {
@@ -46,6 +53,7 @@ impl WorkspaceState {
             tabsize_cache: Mutex::new(None),
             sdk_file: None,
             sdk_parsed: None,
+            format_style: crate::intellisense::FormatStyle::default(),
         }
     }
 
@@ -55,12 +63,11 @@ impl WorkspaceState {
     }
 
     pub fn set_sdk_file_opt(&mut self, path: Option<PathBuf>) {
-        match path {
-            Some(p) => self.set_sdk_file(p),
-            None => {
-                self.sdk_file = None;
-                self.sdk_parsed = None;
-            }
+        if let Some(p) = path {
+            self.set_sdk_file(p);
+        } else {
+            self.sdk_file = None;
+            self.sdk_parsed = None;
         }
     }
 
@@ -71,10 +78,13 @@ impl WorkspaceState {
     }
 
     pub fn include_paths(&self) -> Vec<PathBuf> {
-        self.include_paths_override
-            .as_deref()
-            .map(|paths| paths.to_vec())
-            .unwrap_or_else(|| self.config.resolved_include_paths(self.workspace_root.as_deref()))
+        self.include_paths_override.as_deref().map_or_else(
+            || {
+                self.config
+                    .resolved_include_paths(self.workspace_root.as_deref())
+            },
+            <[std::path::PathBuf]>::to_vec,
+        )
     }
 
     pub fn invalidate_tabsize_cache(&self) {
@@ -93,7 +103,8 @@ impl WorkspaceState {
             doc.text = text;
             doc.version = version;
         } else {
-            self.open_docs.insert(uri.to_string(), Document { text, version });
+            self.open_docs
+                .insert(uri.to_string(), Document { text, version });
         }
 
         // If an include file changed, also evict every file that depends on it.
@@ -133,12 +144,15 @@ impl WorkspaceState {
         let bytes = std::fs::read(path).ok()?;
         let text = decode_bytes(&bytes);
         let parsed = Arc::new(parse_file(&text));
-        self.parsed_cache.insert(path.to_path_buf(), Arc::clone(&parsed));
+        self.parsed_cache
+            .insert(path.to_path_buf(), Arc::clone(&parsed));
         Some(parsed)
     }
 
     pub fn open_dependents(&self, uri: &str) -> Vec<String> {
-        let Some(start) = uri_to_path(uri) else { return vec![] };
+        let Some(start) = uri_to_path(uri) else {
+            return vec![];
+        };
         let start = start.canonicalize().unwrap_or(start);
 
         let mut visited: HashSet<PathBuf> = HashSet::new();
@@ -172,8 +186,12 @@ impl WorkspaceState {
     }
 
     pub fn analyze(&self, uri: &str) -> Vec<PawnDiagnostic> {
-        let Some(text) = self.get_text(uri) else { return vec![] };
-        let Some(file_path) = uri_to_path(uri) else { return vec![] };
+        let Some(text) = self.get_text(uri) else {
+            return vec![];
+        };
+        let Some(file_path) = uri_to_path(uri) else {
+            return vec![];
+        };
 
         if self.config.analysis.suppress_diagnostics_in_inc && is_include_file(&file_path) {
             return vec![];
@@ -190,18 +208,47 @@ impl WorkspaceState {
         let global_tabsize = self.cached_tabsize(&inc_paths);
 
         let mut diags = Vec::new();
-        diags.extend(includes::analyze_includes(&parsed.includes, &file_path, &inc_paths, self.workspace_root.as_deref(), locale));
+        diags.extend(includes::analyze_includes(
+            &parsed.includes,
+            &file_path,
+            &inc_paths,
+            self.workspace_root.as_deref(),
+            locale,
+        ));
         diags.extend(semantic::analyze_semantics(&text, locale));
         diags.extend(unused::analyze_unused(
-            &text, &file_path, &parsed, &resolved,
+            &text,
+            &file_path,
+            &parsed,
+            &resolved,
             self.config.analysis.warn_unused_in_inc,
             self.workspace_root.as_deref(),
             locale,
         ));
-        diags.extend(deprecated::analyze_deprecated(&text, &file_path, &parsed, &inc_paths, &resolved, locale));
+        diags.extend(deprecated::analyze_deprecated(
+            &text, &file_path, &parsed, &inc_paths, &resolved, locale,
+        ));
         diags.extend(hints::analyze_hints(&text, &parsed.symbols, locale));
-        diags.extend(undefined::analyze_undefined(&text, &file_path, &parsed, &resolved, self.sdk_parsed.as_ref(), locale));
-        diags.extend(indentation::analyze_indentation(&text, &inc_texts, global_tabsize, locale));
+        diags.extend(undefined::analyze_undefined(
+            &text,
+            &file_path,
+            &parsed,
+            &resolved,
+            self.sdk_parsed.as_ref(),
+            locale,
+        ));
+        diags.extend(indentation::analyze_indentation(
+            &text,
+            &inc_texts,
+            global_tabsize,
+            locale,
+        ));
+        diags.extend(naming::analyze_naming(
+            &text,
+            &parsed.symbols,
+            &self.config.analysis.naming,
+            locale,
+        ));
 
         self.parsed_cache.insert(file_path, parsed);
 
@@ -223,7 +270,9 @@ impl WorkspaceState {
     }
 
     fn evict_dependents(&self, changed_include: &Path) {
-        let canon = changed_include.canonicalize().unwrap_or_else(|_| changed_include.to_path_buf());
+        let canon = changed_include
+            .canonicalize()
+            .unwrap_or_else(|_| changed_include.to_path_buf());
 
         let mut visited: HashSet<PathBuf> = HashSet::new();
         let mut queue = std::collections::VecDeque::new();
@@ -303,7 +352,7 @@ fn percent_decode(s: &str) -> String {
 fn is_include_file(path: &Path) -> bool {
     matches!(
         path.extension().and_then(|e| e.to_str()),
-        Some("inc") | Some("p") | Some("pawn")
+        Some("inc" | "p" | "pawn")
     )
 }
 
@@ -312,14 +361,18 @@ fn is_include_file(path: &Path) -> bool {
 fn find_global_tabsize(inc_paths: &[PathBuf]) -> Option<u32> {
     let mut result = None;
     for dir in inc_paths {
-        let Ok(entries) = std::fs::read_dir(dir) else { continue };
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            continue;
+        };
         for entry in entries.flatten() {
             let path = entry.path();
             let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
             if !matches!(ext, "inc" | "p" | "pwn") {
                 continue;
             }
-            let Ok(bytes) = std::fs::read(&path) else { continue };
+            let Ok(bytes) = std::fs::read(&path) else {
+                continue;
+            };
             let text = decode_bytes(&bytes);
             for line in text.lines() {
                 let trimmed = line.trim();
@@ -342,14 +395,18 @@ fn parse_sdk(path: &PathBuf) -> Option<ParsedFile> {
 
     // open.mp.inc itself has almost no symbols — they live in _open_mp and sub-includes.
     // Resolve transitively so all SDK symbols are visible.
-    let inc_paths: Vec<PathBuf> = path.parent().map(|p| vec![p.to_path_buf()]).unwrap_or_default();
+    let inc_paths: Vec<PathBuf> = path
+        .parent()
+        .map(|p| vec![p.to_path_buf()])
+        .unwrap_or_default();
     let resolved = collect_included_files(path, &inc_paths, &root.includes, 16, 1000);
 
     for inc_path in &resolved.paths {
         if let Some(entry) = resolved.files.get(inc_path) {
             root.symbols.extend(entry.parsed.symbols.clone());
             root.macro_names.extend(entry.parsed.macro_names.clone());
-            root.func_macro_prefixes.extend(entry.parsed.func_macro_prefixes.clone());
+            root.func_macro_prefixes
+                .extend(entry.parsed.func_macro_prefixes.clone());
         }
     }
 

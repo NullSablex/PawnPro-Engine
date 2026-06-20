@@ -1,8 +1,12 @@
-use tower_lsp::lsp_types::*;
+use tower_lsp::lsp_types::{
+    Documentation, MarkupContent, MarkupKind, ParameterInformation, ParameterLabel, Position,
+    SignatureHelp, SignatureInformation,
+};
 
 use crate::workspace::WorkspaceState;
 
 use super::collect_all_symbols;
+use crate::util::to_u32;
 
 pub fn get_signature_help(
     state: &WorkspaceState,
@@ -49,8 +53,7 @@ pub fn get_signature_help(
         })
         .collect();
 
-    let active_idx = (active_param as u32)
-        .min(param_infos.len().saturating_sub(1) as u32);
+    let active_idx = to_u32(active_param).min(to_u32(param_infos.len().saturating_sub(1)));
 
     Some(SignatureHelp {
         signatures: vec![SignatureInformation {
@@ -76,9 +79,11 @@ fn find_call_context(prefix: &str) -> Option<(String, usize)> {
     let mut in_str = false;
     let mut in_char = false;
 
-    let mut i = chars.len() as isize - 1;
-    while i >= 0 {
-        let ch = chars[i as usize];
+    // Caminha de trás para frente com índice `usize` (via `checked_sub`),
+    // evitando `isize` e seus casts.
+    let mut i = chars.len().checked_sub(1);
+    while let Some(idx) = i {
+        let ch = chars[idx];
         match ch {
             '"' if !in_char => in_str = !in_str,
             '\'' if !in_str => in_char = !in_char,
@@ -89,7 +94,7 @@ fn find_call_context(prefix: &str) -> Option<(String, usize)> {
             }
             '(' => {
                 if depth == 0 {
-                    let name = name_before(&chars, i as usize)?;
+                    let name = name_before(&chars, idx)?;
                     return Some((name, active_param));
                 }
                 depth -= 1;
@@ -97,7 +102,7 @@ fn find_call_context(prefix: &str) -> Option<(String, usize)> {
             ',' if depth == 0 => active_param += 1,
             _ => {}
         }
-        i -= 1;
+        i = idx.checked_sub(1);
     }
     None
 }

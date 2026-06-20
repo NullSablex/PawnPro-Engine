@@ -13,6 +13,62 @@ caso encontre por favor relate para ajudar a manter a consistência dos dados.
 
 ---
 
+## [1.2.0] - 18/06/2026
+
+### Adicionado
+
+#### Assistente de nomes (`PP0018`)
+- **Diagnóstico de nomes pobres**, offline e determinístico (sem IA, sem rede). Avalia funções, parâmetros e variáveis locais (`new`/`decl`/`static`), além de globais, constantes (`const`/enum) e macros (`#define`). Desligado por padrão (`analysis.naming.enabled`).
+- **Categorias distintas** — constantes (`const`/enum) e macros (`#define`) são tratadas como categorias separadas, cada uma com seu estilo (um `#define` não é uma constante tipada).
+- **Regras**: nomes curtos (`minLength`, com tolerância a índices de loop), placeholders (`tmp`/`foo`/… — lista configurável) e **estilo de caixa por categoria**.
+- **Multi-estilo por categoria** — cada categoria aceita uma lista de estilos (`camelCase`/`snake_case`/`PascalCase`/`UPPER_CASE`/`Capitalized_Snake`); um nome é aceito se casar com qualquer um deles. Lista vazia = sem checagem. O `Capitalized_Snake` reconhece cada trecho separado por `_` começando com maiúscula e contendo ao menos uma minúscula (ex.: `Carregar_Lixeiras`); o `_` é opcional, então `Capitalized_Snake` é um superconjunto de `PascalCase` — nomes como `Palavrao` e `CarregarLixeiras` também casam. A detecção rejeita segmentos todo-maiúsculos (`Carregar_LIXEIRAS`), que são `UPPER_CASE`.
+- **Listas externas** — `blocklist` e índices de loop podem vir de arquivos `.ban`/`.allow` (um termo por linha, `#` comenta), com prioridade sobre o inline e _fallback_ automático. Limite de processamento configurável (`maxListFileBytes`, padrão 32 MB).
+- **Reação em tempo real** — mudanças na configuração de nomes (via `workspace/didChangeConfiguration`) republicam os diagnósticos sem reiniciar o servidor.
+
+#### Renomeação e quick fixes (`textDocument/codeAction`)
+- **`textDocument/rename`** com `prepareProvider` — reusa a busca de referências para renomear todas as ocorrências.
+- **Quick fix de estilo** — sobre `PP0018`, oferece converter o nome para o estilo configurado (incluindo `Capitalized_Snake`, ex.: `carregar_lixeiras` → `Carregar_Lixeiras`).
+- **Quick fix de remoção de código não usado** — sobre `PP0005` (variável), `PP0006`/`PP0016` (função) e `PP0009` (parâmetro): remove a declaração inteira (variável/função pelo balanço de chaves, ignorando `{}` em strings; parâmetro junto da vírgula adjacente). É oferta, nunca automático; **não disponível em arquivos `.inc`** — onde "não usado" costuma ser falso positivo para quem desenvolve a biblioteca.
+
+#### Internacionalização
+- **Mensagens por idioma** reorganizadas em `src/messages/langs/`. Além de PT-BR e EN, esqueletos para **Espanhol, Russo e Romeno** (placeholder, a traduzir). O `Locale` resolve pelo prefixo da tag; desconhecido cai em inglês.
+
+#### Motor de formatação guiado por estrutura
+- Reescrita do formatador sobre a `StmtTree` (indentação estrutural real) com **presets** Allman/K&R/Compacto/Custom e ajustes finos, validados contra o `pawncc` como oráculo.
+
+### Corrigido
+
+#### Formatador (`textDocument/formatting` e `rangeFormatting`)
+- **Operadores corrompidos** — o reconhecimento inseria espaços que quebravam a compilação. Reescrito com _longest-match_ baseado na tabela `sc_tokens[]` do compilador open.mp:
+  - `i++` / `i--` não são mais fatiados em `i + +` / `i - -`
+  - `>>>=`, `>>>`, `<<=`, `>>=`, `&=`, `|=`, `^=` preservados (antes viravam `>> >=` etc.)
+  - `sizeof(x)` / `tagof(x)` não recebem mais espaço espúrio (são operadores, não keywords)
+  - `for(a;b;c)` agora espaça os `;` corretamente, sem produzir `for (;; )`
+  - `...`, `..`, `::` preservados intactos
+- **`warning 217: loose indentation`** — a indentação produzida divergia do que o compilador espera. Reescrita a lógica de profundidade com pilha de blocos:
+  - corpos de controle sem chaves (`if`/`for`/`while`/`else`) agora indentam +1 nível
+  - chave de abertura com statement na mesma linha (`{ stmt;`) é normalizada para linha própria (estilo Allman), eliminando a divergência `stmt_sameline` do compilador
+  - `}` de fechamento alinha com o `{` correspondente
+  - validado com o compilador `pawncc` real como oráculo
+- **Linha em branco espúria ao formatar** — _off-by-one_ no range do `TextEdit`: tanto `format_document` quanto `format_range` adicionavam uma linha após o conteúdo. `format_range` também emitia edit mesmo sem mudanças e reformatava a linha-limite quando a seleção terminava em `character 0`. Todos corrigidos.
+- **Vírgula dupla em assinatura multi-linha** — `MyFunc(a,\n b)` produzia `MyFunc(a,, b)`; o acumulador de parâmetros agora normaliza o separador.
+
+### Segurança
+- **`cargo audit` no CI** — novo job que falha em vulnerabilidades conhecidas das dependências (RustSec).
+- **OpenSSF Scorecard** — workflow `scorecard.yml` avaliando boas práticas de segurança do repositório.
+- **Teto de tamanho do `config.json`** — 32 MB, recusado antes do parse (barreira contra estouro de memória); arquivos `.ban`/`.allow` têm limite de processamento próprio e configurável.
+
+### Qualidade de código
+- **CI mais rigoroso** — `cargo clippy -W clippy::pedantic -D warnings` em todos os targets, mais `cargo fmt --check`. O crate passa limpo.
+- **Conversões numéricas centralizadas** — `src/util.rs` com `to_u32` (saturante) substitui casts `as` espalhados, eliminando truncamentos silenciosos.
+- **Utilitário de texto compartilhado** — `src/text.rs` unifica a extração de identificador sob o cursor (antes duplicada entre referências, rename e provedores).
+- **Parser de símbolos refatorado** — migrou para um `ParserState` com handlers por forma sintática.
+- **Dependência morta removida** — `once_cell` (substituída por `std::sync::LazyLock`).
+- **Cobertura de testes ampliada** — formatador, indentação, naming (regras/locais/estilo/sugestão), rename, quick fix de remoção e utilitários de texto.
+- **`code_action` modularizado** — separado em `naming_actions` / `removal_actions` com helpers de edição reutilizáveis, em vez de uma função única.
+
+---
+
 ## [1.1.0] - 29/04/2026
 
 ### Adicionado

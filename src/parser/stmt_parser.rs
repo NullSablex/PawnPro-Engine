@@ -1,4 +1,4 @@
-//! Parser de statements fiel ao compilador Pawn (sc1.c: compound() + statement()).
+//! Parser de statements fiel ao compilador Pawn (sc1.c: `compound()` + `statement()`).
 //!
 //! Consome um [`TokenStream`] e produz uma [`StmtTree`] — uma sequência de
 //! [`Stmt`] com escopo, indentação e contexto de bloco. Essa estrutura é a
@@ -8,20 +8,40 @@
 //! A diferença do compilador real é que aqui não geramos código — apenas
 //! analisamos a estrutura para fins de diagnóstico.
 
-#![allow(dead_code)]
-
 use super::token_lexer::{Token, TokenKind, TokenStream};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StmtKind {
-    If, Else, While, Do, For, Switch, Case, Default,
-    Return, Break, Continue, Exit, Goto,
-    FuncDecl, VarDecl, ConstDecl, EnumDecl,
-    Label, Pragma, Include, Define, Expr,
-    BlockOpen, BlockClose,
+    If,
+    Else,
+    While,
+    Do,
+    For,
+    Switch,
+    Case,
+    Default,
+    Return,
+    Break,
+    Continue,
+    Exit,
+    Goto,
+    FuncDecl,
+    VarDecl,
+    ConstDecl,
+    EnumDecl,
+    Label,
+    Pragma,
+    Include,
+    Define,
+    Expr,
+    BlockOpen,
+    BlockClose,
 }
 
 #[derive(Debug, Clone)]
+// `stmt_indent` ecoa o `stmtindent` do compilador (sc2.c); o nome é o termo do
+// domínio, não vale encurtá-lo só para evitar a raiz comum com a struct.
+#[allow(clippy::struct_field_names)]
 pub struct Stmt {
     pub kind: StmtKind,
     pub line: u32,
@@ -29,16 +49,11 @@ pub struct Stmt {
     /// como sc2.c calcula stmtindent
     pub stmt_indent: u32,
     pub depth: u32,
-    /// > 0 = dentro de argumentos de chamada; não checado para indentação
-    pub paren_depth: u32,
-    pub value: String,
 }
 
 #[derive(Debug, Default)]
 pub struct StmtTree {
     pub stmts: Vec<Stmt>,
-    /// valor final de sc_tabsize após #pragma tabsize
-    pub tabsize: u32,
 }
 
 pub fn parse_stmts(stream: TokenStream) -> StmtTree {
@@ -49,19 +64,15 @@ struct Parser {
     tokens: Vec<Token>,
     pos: usize,
     depth: u32,
-    paren_depth: u32,
-    tabsize: u32,
     stmts: Vec<Stmt>,
 }
 
 impl Parser {
     fn new(stream: TokenStream) -> Self {
         Self {
-            tabsize: stream.tabsize,
             tokens: stream.tokens,
             pos: 0,
             depth: 0,
-            paren_depth: 0,
             stmts: Vec::new(),
         }
     }
@@ -70,7 +81,7 @@ impl Parser {
         while !self.at_eof() {
             self.parse_one();
         }
-        StmtTree { stmts: self.stmts, tabsize: self.tabsize }
+        StmtTree { stmts: self.stmts }
     }
 
     fn peek(&self) -> &Token {
@@ -91,14 +102,50 @@ impl Parser {
 
     /// Consome tokens até o próximo ';' ou newline implícito (fim de statement),
     /// respeitando parênteses e colchetes aninhados.
+    /// Consome a etiqueta de um `case <expr>:` ou `default:`, parando logo após o
+    /// `:` que a fecha. Ignora `:` que façam parte de `::` (escopo) ou de um
+    /// ternário `? :` aninhado na expressão do case.
+    fn skip_to_case_colon(&mut self) {
+        let mut ternary = 0i32;
+        loop {
+            let kind = self.peek().kind.clone();
+            match kind {
+                TokenKind::Eof | TokenKind::Semicolon | TokenKind::LBrace => break,
+                TokenKind::Question => {
+                    ternary += 1;
+                    self.advance();
+                }
+                TokenKind::Colon if ternary > 0 => {
+                    ternary -= 1;
+                    self.advance();
+                }
+                TokenKind::Colon => {
+                    self.advance(); // consome o ':' da etiqueta e para
+                    break;
+                }
+                // Demais tokens (incl. `::` de escopo, que NÃO fecha a etiqueta)
+                // são apenas consumidos.
+                _ => {
+                    self.advance();
+                }
+            }
+        }
+    }
+
     fn skip_to_end_of_stmt(&mut self) {
         let mut paren = 0i32;
         loop {
             let kind = self.peek().kind.clone();
             match kind {
                 TokenKind::Eof => break,
-                TokenKind::Semicolon if paren == 0 => { self.advance(); break; }
-                TokenKind::LParen | TokenKind::LBracket => { paren += 1; self.advance(); }
+                TokenKind::Semicolon if paren == 0 => {
+                    self.advance();
+                    break;
+                }
+                TokenKind::LParen | TokenKind::LBracket => {
+                    paren += 1;
+                    self.advance();
+                }
                 TokenKind::RParen | TokenKind::RBracket => {
                     paren -= 1;
                     self.advance();
@@ -113,7 +160,9 @@ impl Parser {
                 // { e } só terminam o statement quando não há parênteses abertos.
                 // Dentro de parênteses, { } são indexadores Pawn (ex: arr{i}).
                 TokenKind::LBrace | TokenKind::RBrace if paren == 0 => break,
-                _ => { self.advance(); }
+                _ => {
+                    self.advance();
+                }
             }
         }
     }
@@ -121,18 +170,27 @@ impl Parser {
     /// Consome uma lista de tokens que compõem a condição/header de um controle
     /// (o `(...)` após if/while/for/switch), retornando ao caller após o `)`.
     fn skip_paren_expr(&mut self) {
-        if !matches!(self.peek().kind, TokenKind::LParen) { return; }
+        if !matches!(self.peek().kind, TokenKind::LParen) {
+            return;
+        }
         let mut depth = 0i32;
         loop {
             match self.peek().kind.clone() {
                 TokenKind::Eof => break,
-                TokenKind::LParen => { depth += 1; self.advance(); }
+                TokenKind::LParen => {
+                    depth += 1;
+                    self.advance();
+                }
                 TokenKind::RParen => {
                     depth -= 1;
                     self.advance();
-                    if depth == 0 { break; }
+                    if depth == 0 {
+                        break;
+                    }
                 }
-                _ => { self.advance(); }
+                _ => {
+                    self.advance();
+                }
             }
         }
     }
@@ -144,8 +202,6 @@ impl Parser {
             col: tok.col,
             stmt_indent: tok.stmt_indent,
             depth: self.depth,
-            paren_depth: self.paren_depth,
-            value: tok.value.clone(),
         });
     }
 
@@ -165,7 +221,9 @@ impl Parser {
             return;
         }
         if matches!(self.peek().kind, TokenKind::RBrace) {
-            if self.depth > 0 { self.depth -= 1; }
+            if self.depth > 0 {
+                self.depth -= 1;
+            }
             let tok = self.advance().clone();
             self.push(StmtKind::BlockClose, &tok);
             return;
@@ -191,12 +249,16 @@ impl Parser {
         let dir = self.advance().clone();
         let kind = match dir.value.as_str() {
             "include" | "tryinclude" => StmtKind::Include,
-            "define"                 => StmtKind::Define,
-            _                        => StmtKind::Pragma,
+            "define" => StmtKind::Define,
+            _ => StmtKind::Pragma,
         };
         self.push(kind, &hash_tok);
     }
 
+    // Reconhece as muitas formas de statement iniciadas por identificador
+    // (chamada, atribuição, declaração, label...). O tamanho reflege a variedade
+    // de formas do Pawn; reflete um despacho linear sobre os tokens seguintes.
+    #[allow(clippy::too_many_lines)]
     fn parse_ident_stmt(&mut self) {
         let tok = self.peek().clone();
         let kw = tok.value.as_str();
@@ -233,11 +295,16 @@ impl Parser {
             "case" => {
                 let t = self.advance().clone();
                 self.push(StmtKind::Case, &t);
-                self.skip_to_end_of_stmt();
+                // A etiqueta do case termina no ':'. O corpo (statement ou bloco)
+                // vem depois e é parseado como statement próprio — assim recebe
+                // sua própria indentação.
+                self.skip_to_case_colon();
             }
             "default" => {
                 let t = self.advance().clone();
                 self.push(StmtKind::Default, &t);
+                // 'default' também é seguido de ':' antes do corpo.
+                self.skip_to_case_colon();
             }
             "return" => {
                 let t = self.advance().clone();
@@ -325,7 +392,10 @@ mod tests {
     fn parse(src: &str) -> Vec<(StmtKind, u32, u32)> {
         let stream = tokenize(src);
         let tree = parse_stmts(stream);
-        tree.stmts.into_iter().map(|s| (s.kind, s.stmt_indent, s.depth)).collect()
+        tree.stmts
+            .into_iter()
+            .map(|s| (s.kind, s.stmt_indent, s.depth))
+            .collect()
     }
 
     #[test]
@@ -334,7 +404,13 @@ mod tests {
         let stmts = parse(src);
         assert!(stmts.iter().any(|(k, _, _)| *k == StmtKind::FuncDecl));
         assert!(stmts.iter().any(|(k, _, _)| *k == StmtKind::BlockOpen));
-        assert_eq!(stmts.iter().filter(|(k, _, _)| *k == StmtKind::Expr).count(), 2);
+        assert_eq!(
+            stmts
+                .iter()
+                .filter(|(k, _, _)| *k == StmtKind::Expr)
+                .count(),
+            2
+        );
         assert!(stmts.iter().any(|(k, _, _)| *k == StmtKind::BlockClose));
     }
 
@@ -344,7 +420,7 @@ mod tests {
         let stmts = parse(src);
         let if_stmt = stmts.iter().find(|(k, _, _)| *k == StmtKind::If).unwrap();
         let else_stmt = stmts.iter().find(|(k, _, _)| *k == StmtKind::Else).unwrap();
-        assert_eq!(if_stmt.2, 0);  // depth 0
+        assert_eq!(if_stmt.2, 0); // depth 0
         assert_eq!(else_stmt.2, 0); // depth 0
     }
 
@@ -353,7 +429,8 @@ mod tests {
         let src = "main()\n{\n    foo();\n    bar();\n}";
         let stmts = parse(src);
         // Expr dentro do bloco (depth=1): foo e bar
-        let exprs: Vec<_> = stmts.iter()
+        let exprs: Vec<_> = stmts
+            .iter()
             .filter(|(k, _, d)| *k == StmtKind::Expr && *d == 1)
             .collect();
         assert_eq!(exprs.len(), 2);
@@ -365,7 +442,8 @@ mod tests {
         // foo() com indent=4, bar() com indent=8 — indentação solta
         let src = "main()\n{\n    foo();\n        bar();\n}";
         let stmts = parse(src);
-        let exprs: Vec<_> = stmts.iter()
+        let exprs: Vec<_> = stmts
+            .iter()
             .filter(|(k, _, d)| *k == StmtKind::Expr && *d == 1)
             .collect();
         assert_eq!(exprs.len(), 2);
@@ -379,10 +457,6 @@ mod tests {
         let src = "main()\n{\n    myLabel:\n    foo();\n}";
         let stream = tokenize(src);
         let tree = parse_stmts(stream);
-        // debug: mostra os statements produzidos
-        for s in &tree.stmts {
-            eprintln!("kind={:?} val={:?} indent={} depth={}", s.kind, s.value, s.stmt_indent, s.depth);
-        }
         assert!(tree.stmts.iter().any(|s| s.kind == StmtKind::Label));
     }
 
@@ -400,7 +474,10 @@ mod tests {
         let src = "main()\n{\n    if (x)\n    {\n        foo();\n    }\n}";
         let stmts = parse(src);
         // foo() está em depth=2: main{} + if{}
-        let foo = stmts.iter().find(|(k, _, d)| *k == StmtKind::Expr && *d == 2).unwrap();
+        let foo = stmts
+            .iter()
+            .find(|(k, _, d)| *k == StmtKind::Expr && *d == 2)
+            .unwrap();
         assert_eq!(foo.2, 2);
     }
 
@@ -416,9 +493,12 @@ mod tests {
         let src = "#pragma tabsize 4\nmain()\n{\n\tfoo();\n}";
         let stream = tokenize(src);
         let tree = parse_stmts(stream);
-        assert_eq!(tree.tabsize, 4);
         // foo() está em depth=1 (dentro de main{})
-        let foo = tree.stmts.iter().find(|s| s.kind == StmtKind::Expr && s.depth == 1).unwrap();
+        let foo = tree
+            .stmts
+            .iter()
+            .find(|s| s.kind == StmtKind::Expr && s.depth == 1)
+            .unwrap();
         assert_eq!(foo.stmt_indent, 4);
     }
 }

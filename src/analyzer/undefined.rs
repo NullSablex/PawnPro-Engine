@@ -1,38 +1,39 @@
 use std::collections::HashSet;
 use std::path::Path;
 
-use once_cell::sync::Lazy;
 use regex::Regex;
 
-use crate::messages::{msg, Locale, MsgKey};
+use crate::messages::{Locale, MsgKey, msg};
 use crate::parser::lexer::strip_line_comments;
 use crate::parser::{ParsedFile, SymbolKind};
 
 use super::includes::ResolvedIncludes;
 use super::{codes, diagnostic::PawnDiagnostic};
+use crate::util::to_u32;
 
-static RX_CALL: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"\b(?:([A-Za-z_]\w*)::)?([A-Za-z_]\w*)\s*\(").unwrap()
-});
+static RX_CALL: std::sync::LazyLock<Regex> =
+    std::sync::LazyLock::new(|| Regex::new(r"\b(?:([A-Za-z_]\w*)::)?([A-Za-z_]\w*)\s*\(").unwrap());
 
 // Limite de caracteres do compilador real (sNAMEMAX = 31)
 const SNAME_MAX: usize = 31;
 
 fn truncate_name(name: &str) -> &str {
-    if name.len() <= SNAME_MAX { name } else { &name[..SNAME_MAX] }
+    if name.len() <= SNAME_MAX {
+        name
+    } else {
+        &name[..SNAME_MAX]
+    }
 }
 
-static RESERVED: Lazy<HashSet<&'static str>> = Lazy::new(|| {
+static RESERVED: std::sync::LazyLock<HashSet<&'static str>> = std::sync::LazyLock::new(|| {
     [
-        "if", "else", "for", "while", "do", "switch", "case", "return",
-        "sizeof", "tagof", "state", "goto", "assert", "break", "continue",
-        "exit", "sleep", "new", "static", "const", "public", "stock",
-        "native", "forward",
+        "if", "else", "for", "while", "do", "switch", "case", "return", "sizeof", "tagof", "state",
+        "goto", "assert", "break", "continue", "exit", "sleep", "new", "static", "const", "public",
+        "stock", "native", "forward",
     ]
     .into_iter()
     .collect()
 });
-
 
 fn mask_string_literals(line: &str) -> String {
     let mut out = String::with_capacity(line.len());
@@ -46,9 +47,14 @@ fn mask_string_literals(line: &str) -> String {
                     None => break,
                     Some('\\') => {
                         out.push(' ');
-                        if chars.next().is_some() { out.push(' '); }
+                        if chars.next().is_some() {
+                            out.push(' ');
+                        }
                     }
-                    Some(c) if c == quote => { out.push(c); break; }
+                    Some(c) if c == quote => {
+                        out.push(c);
+                        break;
+                    }
                     Some(_) => out.push(' '),
                 }
             }
@@ -70,8 +76,12 @@ pub fn analyze_undefined(
     // PP0010 só faz sentido em compilation units (.pwn).
     // .inc, .p, .pawn são include files — nunca compilados diretamente.
     let is_include = matches!(
-        file_path.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase()).as_deref(),
-        Some("inc") | Some("p") | Some("pawn")
+        file_path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(str::to_ascii_lowercase)
+            .as_deref(),
+        Some("inc" | "p" | "pawn")
     );
     if is_include {
         return vec![];
@@ -82,7 +92,9 @@ pub fn analyze_undefined(
 
     let sources: Vec<&ParsedFile> = {
         let mut v: Vec<&ParsedFile> = Vec::new();
-        if let Some(sdk) = sdk_parsed { v.push(sdk); }
+        if let Some(sdk) = sdk_parsed {
+            v.push(sdk);
+        }
         v.push(parsed);
         v
     };
@@ -132,8 +144,10 @@ pub fn analyze_undefined(
 
         for cap in RX_CALL.captures_iter(line) {
             let namespace = cap.get(1).map(|m| m.as_str());
-            let name = cap.get(2).map(|m| m.as_str()).unwrap_or("");
-            if name.is_empty() { continue; }
+            let name = cap.get(2).map_or("", |m| m.as_str());
+            if name.is_empty() {
+                continue;
+            }
 
             // Aplica truncagem igual ao compilador real (sNAMEMAX=31)
             let name_trunc = truncate_name(name);
@@ -144,16 +158,21 @@ pub fn analyze_undefined(
 
             if let Some(ns) = namespace {
                 let ns_trunc = truncate_name(ns);
-                let expanded = format!("{}_{}", ns_trunc, name_trunc);
-                if known.contains(expanded.as_str()) || known.contains(ns_trunc) || func_prefixes.contains(ns_trunc) {
+                let expanded = format!("{ns_trunc}_{name_trunc}");
+                if known.contains(expanded.as_str())
+                    || known.contains(ns_trunc)
+                    || func_prefixes.contains(ns_trunc)
+                {
                     continue;
                 }
                 continue; // unknown namespace — macro may use other patterns
             }
 
-            let col = raw_line.find(name).unwrap_or(0) as u32;
+            let col = to_u32(raw_line.find(name).unwrap_or(0));
             diags.push(PawnDiagnostic::warning(
-                line_idx as u32, col, col + name.len() as u32,
+                to_u32(line_idx),
+                col,
+                col + to_u32(name.len()),
                 codes::PP0010,
                 msg(locale, MsgKey::SymbolUndeclared).replace("{}", name),
             ));

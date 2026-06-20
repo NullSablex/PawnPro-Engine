@@ -1,6 +1,6 @@
-use crate::messages::{msg, Locale, MsgKey};
+use crate::messages::{Locale, MsgKey, msg};
+use crate::parser::stmt_parser::{StmtKind, parse_stmts};
 use crate::parser::token_lexer::{tokenize, tokenize_with_tabsize};
-use crate::parser::stmt_parser::{parse_stmts, StmtKind};
 
 use super::{codes, diagnostic::PawnDiagnostic};
 
@@ -20,7 +20,12 @@ fn extract_tabsize(text: &str) -> Option<u32> {
     result
 }
 
-pub fn analyze_indentation(text: &str, include_texts: &[&str], global_tabsize: Option<u32>, locale: Locale) -> Vec<PawnDiagnostic> {
+pub fn analyze_indentation(
+    text: &str,
+    include_texts: &[&str],
+    global_tabsize: Option<u32>,
+    locale: Locale,
+) -> Vec<PawnDiagnostic> {
     // Prioridade: #pragma tabsize no próprio texto > includes diretos > tabsize global dos inc paths.
     let mut effective_tabsize = global_tabsize;
     for inc in include_texts {
@@ -72,7 +77,10 @@ pub fn analyze_indentation(text: &str, include_texts: &[&str], global_tabsize: O
             _ => {}
         }
 
-        let is_control = matches!(stmt.kind, StmtKind::If | StmtKind::While | StmtKind::For | StmtKind::Else | StmtKind::Do);
+        let is_control = matches!(
+            stmt.kind,
+            StmtKind::If | StmtKind::While | StmtKind::For | StmtKind::Else | StmtKind::Do
+        );
         let next_is_block = matches!(stmts.get(i).map(|s| &s.kind), Some(StmtKind::BlockOpen));
 
         if skip_next_as_implicit_body {
@@ -122,7 +130,10 @@ mod tests {
     use super::*;
 
     fn diag_lines(src: &str) -> Vec<u32> {
-        analyze_indentation(src, &[], None, Locale::En).iter().map(|d| d.line).collect()
+        analyze_indentation(src, &[], None, Locale::En)
+            .iter()
+            .map(|d| d.line)
+            .collect()
     }
 
     #[test]
@@ -167,7 +178,10 @@ mod tests {
             "}\n",
         );
         let lines = diag_lines(src);
-        assert!(lines.is_empty(), "template gamemode não deve ter PP0017: {:?}", lines);
+        assert!(
+            lines.is_empty(),
+            "template gamemode não deve ter PP0017: {lines:?}"
+        );
     }
 
     #[test]
@@ -178,7 +192,10 @@ mod tests {
         assert!(
             diags.is_empty(),
             "com tabsize=4 do include, tab e 4 espaços são equivalentes: {:?}",
-            diags.iter().map(|d| format!("L{}: {}", d.line, d.message)).collect::<Vec<_>>()
+            diags
+                .iter()
+                .map(|d| format!("L{}: {}", d.line, d.message))
+                .collect::<Vec<_>>()
         );
     }
 
@@ -198,7 +215,10 @@ mod tests {
             "    foo(i);\n",
             "}\n",
         );
-        assert!(diag_lines(src).is_empty(), "body implícito de if não deve gerar PP0017");
+        assert!(
+            diag_lines(src).is_empty(),
+            "body implícito de if não deve gerar PP0017"
+        );
     }
 
     #[test]
@@ -214,7 +234,10 @@ mod tests {
             "}\n",
         );
         let lines = diag_lines(src);
-        assert!(lines.is_empty(), "else if sem chaves não deve gerar PP0017: linhas {:?}", lines);
+        assert!(
+            lines.is_empty(),
+            "else if sem chaves não deve gerar PP0017: linhas {lines:?}"
+        );
     }
 
     #[test]
@@ -231,8 +254,14 @@ mod tests {
             "}\n",
         );
         let diags = analyze_indentation(src, &[foreach_inc], None, Locale::En);
-        assert!(diags.is_empty(), "else {{ }} com indentação uniforme não deve gerar PP0017: {:?}",
-            diags.iter().map(|d| format!("L{}: {}", d.line, d.message)).collect::<Vec<_>>());
+        assert!(
+            diags.is_empty(),
+            "else {{ }} com indentação uniforme não deve gerar PP0017: {:?}",
+            diags
+                .iter()
+                .map(|d| format!("L{}: {}", d.line, d.message))
+                .collect::<Vec<_>>()
+        );
     }
 
     #[test]
@@ -247,9 +276,14 @@ mod tests {
             "    }\n",
         );
         let diags = analyze_indentation(src, &[foreach_inc], None, Locale::En);
-        assert!(diags.is_empty(),
+        assert!(
+            diags.is_empty(),
             "tab e espaços equivalentes com tabsize=4 não devem gerar PP0017: {:?}",
-            diags.iter().map(|d| format!("L{}: {}", d.line, d.message)).collect::<Vec<_>>());
+            diags
+                .iter()
+                .map(|d| format!("L{}: {}", d.line, d.message))
+                .collect::<Vec<_>>()
+        );
     }
 
     #[test]
@@ -269,8 +303,14 @@ mod tests {
             "}\n",
         );
         let diags = analyze_indentation(src, &[], None, Locale::En);
-        assert!(diags.is_empty(), "( na próxima linha com {{}} em args não deve gerar PP0017: {:?}",
-            diags.iter().map(|d| format!("L{}: {}", d.line, d.message)).collect::<Vec<_>>());
+        assert!(
+            diags.is_empty(),
+            "( na próxima linha com {{}} em args não deve gerar PP0017: {:?}",
+            diags
+                .iter()
+                .map(|d| format!("L{}: {}", d.line, d.message))
+                .collect::<Vec<_>>()
+        );
     }
 
     #[test]

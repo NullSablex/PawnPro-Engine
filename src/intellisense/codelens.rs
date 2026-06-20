@@ -1,11 +1,12 @@
 use std::collections::HashMap;
 
 use serde_json::json;
-use tower_lsp::lsp_types::*;
+use tower_lsp::lsp_types::{CodeLens, Command, Position, Range};
 
-use crate::messages::{msg, MsgKey};
+use crate::messages::{MsgKey, msg};
 use crate::parser::lexer::strip_line_comments;
 use crate::parser::types::SymbolKind;
+use crate::util::to_u32;
 use crate::workspace::WorkspaceState;
 
 pub fn get_code_lens(state: &WorkspaceState, uri: &str) -> Vec<CodeLens> {
@@ -56,10 +57,13 @@ pub fn get_code_lens(state: &WorkspaceState, uri: &str) -> Vec<CodeLens> {
             };
 
             let range = Range {
-                start: Position { line: sym.line, character: sym.col },
+                start: Position {
+                    line: sym.line,
+                    character: sym.col,
+                },
                 end: Position {
                     line: sym.line,
-                    character: sym.col + sym.name.len() as u32,
+                    character: sym.col + to_u32(sym.name.len()),
                 },
             };
 
@@ -67,11 +71,7 @@ pub fn get_code_lens(state: &WorkspaceState, uri: &str) -> Vec<CodeLens> {
                 Some(Command {
                     title,
                     command: "pawnpro.findReferences".to_string(),
-                    arguments: Some(vec![
-                        json!(uri),
-                        json!(sym.line),
-                        json!(sym.col),
-                    ]),
+                    arguments: Some(vec![json!(uri), json!(sym.line), json!(sym.col)]),
                 })
             } else {
                 Some(Command {
@@ -81,7 +81,11 @@ pub fn get_code_lens(state: &WorkspaceState, uri: &str) -> Vec<CodeLens> {
                 })
             };
 
-            CodeLens { range, command, data: None }
+            CodeLens {
+                range,
+                command,
+                data: None,
+            }
         })
         .collect()
 }

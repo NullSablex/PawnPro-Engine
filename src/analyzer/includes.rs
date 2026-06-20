@@ -1,11 +1,12 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 
-use crate::messages::{msg, Locale, MsgKey};
+use crate::messages::{Locale, MsgKey, msg};
 use crate::parser::lexer::decode_bytes;
-use crate::parser::{parse_file, IncludeDirective, ParsedFile};
+use crate::parser::{IncludeDirective, ParsedFile, parse_file};
 
 use super::{codes, diagnostic::PawnDiagnostic};
+use crate::util::to_u32;
 
 #[derive(Clone)]
 pub struct IncludeEntry {
@@ -34,23 +35,28 @@ pub fn resolve_include(
     let token = &directive.token;
 
     if directive.is_angle {
-        include_paths.iter().find_map(|base| try_resolve(base.join(token)))
+        include_paths
+            .iter()
+            .find_map(|base| try_resolve(&base.join(token)))
     } else {
-        try_resolve(file_dir.join(token))
-            .or_else(|| include_paths.iter().find_map(|base| try_resolve(base.join(token))))
+        try_resolve(&file_dir.join(token)).or_else(|| {
+            include_paths
+                .iter()
+                .find_map(|base| try_resolve(&base.join(token)))
+        })
     }
 }
 
 // On Linux, performs a case-insensitive directory scan when the exact path fails,
 // covering mismatched casing like `evf.inc` vs `EVF.inc`.
-fn try_resolve(path: PathBuf) -> Option<PathBuf> {
+fn try_resolve(path: &Path) -> Option<PathBuf> {
     let base = path.to_string_lossy();
 
     for ext in EXTENSIONS {
         let candidate = if ext.is_empty() {
-            path.clone()
+            path.to_path_buf()
         } else {
-            PathBuf::from(format!("{}{}", base, ext))
+            PathBuf::from(format!("{base}{ext}"))
         };
 
         if candidate.exists() {
@@ -86,13 +92,15 @@ pub fn analyze_includes(
     directives
         .iter()
         .filter_map(|dir| {
-            let col_end = dir.col + dir.token.len() as u32;
+            let col_end = dir.col + to_u32(dir.token.len());
             if resolve_include(dir, file_dir, include_paths).is_some() {
                 return None;
             }
             let diag = if dir.is_try {
                 PawnDiagnostic::hint(
-                    dir.line, dir.col, col_end,
+                    dir.line,
+                    dir.col,
+                    col_end,
                     codes::PP0013,
                     msg(locale, MsgKey::TryIncludeNotFound).replace("{}", &dir.token),
                 )
@@ -125,10 +133,16 @@ fn build_not_found_message(
                 .collect();
             let suffix = if include_paths.len() > 2 { "..." } else { "" };
             let template = msg(locale, MsgKey::IncludeSearchedIn);
-            out.push_str(&template.replacen("{}", &paths.join(", "), 1).replacen("{}", suffix, 1));
+            out.push_str(
+                &template
+                    .replacen("{}", &paths.join(", "), 1)
+                    .replacen("{}", suffix, 1),
+            );
         }
     } else {
-        out.push_str(&msg(locale, MsgKey::IncludeRelativeTo).replace("{}", &file_dir.display().to_string()));
+        out.push_str(
+            &msg(locale, MsgKey::IncludeRelativeTo).replace("{}", &file_dir.display().to_string()),
+        );
     }
 
     out
@@ -148,11 +162,12 @@ pub fn collect_included_files(
     let mut files: HashMap<PathBuf, IncludeEntry> = HashMap::new();
     let mut reverse_deps: HashMap<PathBuf, HashSet<PathBuf>> = HashMap::new();
 
-    let root_canon = file_path.canonicalize().unwrap_or_else(|_| file_path.to_path_buf());
+    let root_canon = file_path
+        .canonicalize()
+        .unwrap_or_else(|_| file_path.to_path_buf());
     let file_dir = file_path.parent().unwrap_or(Path::new(".")).to_path_buf();
 
-    let mut queue: VecDeque<(Vec<IncludeDirective>, PathBuf, PathBuf, usize)> =
-        VecDeque::new();
+    let mut queue: VecDeque<(Vec<IncludeDirective>, PathBuf, PathBuf, usize)> = VecDeque::new();
     queue.push_back((directives.to_vec(), file_dir, root_canon, 1));
 
     while let Some((dirs, dir, parent_canon, depth)) = queue.pop_front() {
@@ -185,14 +200,15 @@ pub fn collect_included_files(
                     IncludeEntry { text, parsed }
                 });
                 let nested_dirs = entry.parsed.includes.clone();
-                let nested_dir = resolved
-                    .parent()
-                    .unwrap_or(Path::new("."))
-                    .to_path_buf();
+                let nested_dir = resolved.parent().unwrap_or(Path::new(".")).to_path_buf();
                 queue.push_back((nested_dirs, nested_dir, norm, depth + 1));
             }
         }
     }
 
-    ResolvedIncludes { paths: ordered, files, reverse_deps }
+    ResolvedIncludes {
+        paths: ordered,
+        files,
+        reverse_deps,
+    }
 }

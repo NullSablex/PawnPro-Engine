@@ -11,8 +11,11 @@ pub fn update_brace_depth(line: &str, mut depth: i32) -> i32 {
         } else if ch == b'\'' && !in_str && prev != b'\\' {
             in_char = !in_char;
         } else if !in_str && !in_char {
-            if ch == b'{' { depth += 1; }
-            else if ch == b'}' { depth = (depth - 1).max(0); }
+            if ch == b'{' {
+                depth += 1;
+            } else if ch == b'}' {
+                depth = (depth - 1).max(0);
+            }
         }
         i += 1;
     }
@@ -28,10 +31,15 @@ pub fn decode_bytes(bytes: &[u8]) -> String {
 
 pub fn has_inline_deprecated(raw_line: &str) -> bool {
     if let Some(p) = raw_line.find("//")
-        && raw_line[p..].contains("@DEPRECATED") { return true; }
+        && raw_line[p..].contains("@DEPRECATED")
+    {
+        return true;
+    }
     if let Some(p) = raw_line.find("/*") {
-        let end = raw_line[p..].find("*/").map(|q| p + q).unwrap_or(raw_line.len());
-        if raw_line[p..end].contains("@DEPRECATED") { return true; }
+        let end = raw_line[p..].find("*/").map_or(raw_line.len(), |q| p + q);
+        if raw_line[p..end].contains("@DEPRECATED") {
+            return true;
+        }
     }
     false
 }
@@ -77,29 +85,27 @@ pub fn strip_line_comments(line: &str, in_block: bool) -> StripResult {
             }
             out.push(ch);
             i += 1;
-        } else {
-            if i + 1 < len && bytes[i] == b'/' && bytes[i + 1] == b'/' {
-                while out.len() < len {
-                    out.push(b' ');
-                }
-                break;
-            } else if i + 1 < len && bytes[i] == b'/' && bytes[i + 1] == b'*' {
+        } else if i + 1 < len && bytes[i] == b'/' && bytes[i + 1] == b'/' {
+            while out.len() < len {
                 out.push(b' ');
-                out.push(b' ');
-                i += 2;
-                in_block = true;
-            } else if bytes[i] == b'"' {
-                in_string = true;
-                out.push(bytes[i]);
-                i += 1;
-            } else if bytes[i] == b'\'' {
-                in_char = true;
-                out.push(bytes[i]);
-                i += 1;
-            } else {
-                out.push(bytes[i]);
-                i += 1;
             }
+            break;
+        } else if i + 1 < len && bytes[i] == b'/' && bytes[i + 1] == b'*' {
+            out.push(b' ');
+            out.push(b' ');
+            i += 2;
+            in_block = true;
+        } else if bytes[i] == b'"' {
+            in_string = true;
+            out.push(bytes[i]);
+            i += 1;
+        } else if bytes[i] == b'\'' {
+            in_char = true;
+            out.push(bytes[i]);
+            i += 1;
+        } else {
+            out.push(bytes[i]);
+            i += 1;
         }
     }
 

@@ -1,6 +1,9 @@
-use tower_lsp::lsp_types::*;
+use tower_lsp::lsp_types::{
+    SemanticToken, SemanticTokenType, SemanticTokens, SemanticTokensLegend,
+};
 
 use crate::parser::SymbolKind;
+use crate::util::to_u32;
 use crate::workspace::WorkspaceState;
 
 // Token type index — must match the legend declared in ServerCapabilities
@@ -14,7 +17,15 @@ pub fn get_semantic_tokens(state: &WorkspaceState, uri: &str) -> Option<Semantic
     let sdk_callables: std::collections::HashSet<&str> = sdk
         .symbols
         .iter()
-        .filter(|s| !matches!(s.kind, SymbolKind::Variable | SymbolKind::Define | SymbolKind::Enum | SymbolKind::StaticConst))
+        .filter(|s| {
+            !matches!(
+                s.kind,
+                SymbolKind::Variable
+                    | SymbolKind::Define
+                    | SymbolKind::Enum
+                    | SymbolKind::StaticConst
+            )
+        })
         .map(|s| s.name.as_str())
         .collect();
 
@@ -67,8 +78,8 @@ pub fn get_semantic_tokens(state: &WorkspaceState, uri: &str) -> Option<Semantic
                 };
 
                 if has_paren {
-                    let cur_line = line_idx as u32;
-                    let cur_start = start as u32;
+                    let cur_line = to_u32(line_idx);
+                    let cur_start = to_u32(start);
 
                     let delta_line = cur_line - prev_line;
                     let delta_start = if delta_line == 0 {
@@ -80,7 +91,7 @@ pub fn get_semantic_tokens(state: &WorkspaceState, uri: &str) -> Option<Semantic
                     tokens.push(SemanticToken {
                         delta_line,
                         delta_start,
-                        length: word.len() as u32,
+                        length: to_u32(word.len()),
                         token_type: TOKEN_TYPE_FUNCTION,
                         token_modifiers_bitset: 0,
                     });

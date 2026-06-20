@@ -1,15 +1,16 @@
 use std::collections::HashSet;
 
-use once_cell::sync::Lazy;
 use regex::Regex;
 
-use crate::messages::{msg, Locale, MsgKey};
+use crate::messages::{Locale, MsgKey, msg};
 use crate::parser::lexer::strip_line_comments;
 use crate::parser::types::{Symbol, SymbolKind};
 
 use super::{codes, diagnostic::PawnDiagnostic};
+use crate::util::to_u32;
 
-static RX_WORD: Lazy<Regex> = Lazy::new(|| Regex::new(r"\b([A-Za-z_]\w*)\b").unwrap());
+static RX_WORD: std::sync::LazyLock<Regex> =
+    std::sync::LazyLock::new(|| Regex::new(r"\b([A-Za-z_]\w*)\b").unwrap());
 
 pub fn analyze_hints(text: &str, symbols: &[Symbol], locale: Locale) -> Vec<PawnDiagnostic> {
     let mut diags = Vec::new();
@@ -17,8 +18,10 @@ pub fn analyze_hints(text: &str, symbols: &[Symbol], locale: Locale) -> Vec<Pawn
     let funcs: Vec<&Symbol> = symbols
         .iter()
         .filter(|s| {
-            matches!(s.kind, SymbolKind::Public | SymbolKind::Stock | SymbolKind::Static | SymbolKind::Plain)
-                && !s.params.is_empty()
+            matches!(
+                s.kind,
+                SymbolKind::Public | SymbolKind::Stock | SymbolKind::Static | SymbolKind::Plain
+            ) && !s.params.is_empty()
         })
         .collect();
 
@@ -45,7 +48,7 @@ pub fn analyze_hints(text: &str, symbols: &[Symbol], locale: Locale) -> Vec<Pawn
                 diags.push(PawnDiagnostic::hint(
                     sym.line,
                     col,
-                    col + param.name.len() as u32,
+                    col + to_u32(param.name.len()),
                     codes::PP0009,
                     msg(locale, MsgKey::ParamUnused).replace("{}", &param.name),
                 ));
@@ -68,8 +71,13 @@ fn extract_body_lines<'t>(raw_lines: &[&'t str], decl_line: usize) -> Vec<&'t st
 
         for ch in stripped.text.chars() {
             match ch {
-                '{' => { depth += 1; found_open = true; }
-                '}' => { depth = (depth - 1).max(0); }
+                '{' => {
+                    depth += 1;
+                    found_open = true;
+                }
+                '}' => {
+                    depth = (depth - 1).max(0);
+                }
                 _ => {}
             }
         }
@@ -81,7 +89,9 @@ fn extract_body_lines<'t>(raw_lines: &[&'t str], decl_line: usize) -> Vec<&'t st
         }
     }
 
-    if !found_open { result.clear(); }
+    if !found_open {
+        result.clear();
+    }
     result
 }
 
@@ -93,7 +103,9 @@ fn collect_idents(body_lines: &[&str]) -> HashSet<String> {
         let stripped = strip_line_comments(raw.trim_end_matches('\r'), in_block);
         in_block = stripped.in_block;
 
-        if i == 0 { continue; }
+        if i == 0 {
+            continue;
+        }
 
         for cap in RX_WORD.captures_iter(&stripped.text) {
             idents.insert(cap[1].to_string());
@@ -130,7 +142,7 @@ fn word_col_in_line(line: &str, word: &str) -> Option<u32> {
         let before_ok = i == 0 || !is_ident_byte(bytes[i - 1]);
         let after_ok = i + wlen == bytes.len() || !is_ident_byte(bytes[i + wlen]);
         if before_ok && after_ok {
-            return Some(i as u32);
+            return Some(to_u32(i));
         }
     }
     None

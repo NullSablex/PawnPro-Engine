@@ -26,16 +26,19 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          components: clippy
+          components: clippy, rustfmt
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
 
       - name: Check
-        run: cargo check
+        run: cargo check --all-targets
 
-      - name: Clippy
-        run: cargo clippy -- -D warnings
+      - name: Rustfmt
+        run: cargo fmt --all --check
+
+      - name: Clippy (pedantic, warnings as errors)
+        run: cargo clippy --all-targets -- -W clippy::pedantic -D warnings
 
       - name: Test
         run: cargo test
@@ -44,3 +47,19 @@ jobs:
       # (lto + strip + codegen-units=1 definidos em [profile.release] do Cargo.toml)
       - name: Build release
         run: cargo build --release
+
+  audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      # Falha se houver vulnerabilidade conhecida nas dependências (RustSec).
+      - name: Audit dependencies
+        run: cargo audit

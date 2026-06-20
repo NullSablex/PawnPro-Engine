@@ -1,24 +1,32 @@
-mod completion;
 mod codelens;
+mod completion;
+mod format_engine;
+mod format_indent;
+mod format_style;
 mod formatter;
 mod hover;
+mod quickfix;
 mod references;
+mod rename;
 mod semantic_tokens;
 mod signature;
 
-pub use completion::{get_at_completions, get_completions};
 pub use codelens::get_code_lens;
-pub use formatter::{format_document, format_range, FormatOptions};
+pub use completion::{get_at_completions, get_completions};
+pub use format_style::{BracePlacement, FormatStyle, Preset};
+pub use formatter::{format_document, format_range};
 pub use hover::get_hover;
+pub use quickfix::{removal_kind, removal_range};
 pub use references::get_references;
+pub use rename::{get_rename, prepare_rename};
 pub use semantic_tokens::{get_semantic_tokens, semantic_tokens_legend};
 pub use signature::get_signature_help;
 
 use std::path::{Path, PathBuf};
 
 use crate::analyzer::includes::collect_included_files;
-use crate::parser::types::Symbol;
 use crate::parser::ParsedFile;
+use crate::parser::types::Symbol;
 use crate::workspace::WorkspaceState;
 
 pub(crate) fn extract_word(line: &str, col: usize) -> Option<String> {

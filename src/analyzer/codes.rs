@@ -15,3 +15,4 @@ pub const PP0014: &str = "PP0014"; // Native declarada mas nunca chamada
 pub const PP0015: &str = "PP0015"; // Forward declarado mas nunca chamado
 pub const PP0016: &str = "PP0016"; // Função plain (sem keyword) declarada mas nunca chamada
 pub const PP0017: &str = "PP0017"; // Indentação inconsistente dentro de um bloco
+pub const PP0018: &str = "PP0018"; // Nome de identificador pobre (assistente de nomes)

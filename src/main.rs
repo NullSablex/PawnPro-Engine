@@ -2,8 +2,11 @@ mod analyzer;
 mod config;
 mod intellisense;
 mod messages;
+mod naming;
 mod parser;
 mod server;
+mod text;
+mod util;
 mod workspace;
 
 use tower_lsp::{LspService, Server};

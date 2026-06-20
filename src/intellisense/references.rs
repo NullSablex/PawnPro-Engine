@@ -1,14 +1,11 @@
-use tower_lsp::lsp_types::*;
+use tower_lsp::lsp_types::{Location, Position, Range, Url};
 
 use crate::parser::lexer::strip_line_comments;
 use crate::parser::types::SymbolKind;
+use crate::util::to_u32;
 use crate::workspace::WorkspaceState;
 
-pub fn get_references(
-    state: &WorkspaceState,
-    uri: &str,
-    pos: Position,
-) -> Vec<Location> {
+pub fn get_references(state: &WorkspaceState, uri: &str, pos: Position) -> Vec<Location> {
     let (word, is_callable) = {
         let Some(doc) = state.open_docs.get(uri) else {
             return vec![];
@@ -22,7 +19,7 @@ pub fn get_references(
 
     let mut locations: Vec<Location> = Vec::new();
 
-    for entry in state.open_docs.iter() {
+    for entry in &state.open_docs {
         let doc_uri = entry.key().as_str();
         let text = &entry.text;
 
@@ -40,7 +37,8 @@ pub fn get_references(
             while col + wb.len() <= bytes.len() {
                 if &bytes[col..col + wb.len()] == wb {
                     let before_ok = col == 0 || !is_ident(bytes[col - 1]);
-                    let after_ok = col + wb.len() >= bytes.len() || !is_ident(bytes[col + wb.len()]);
+                    let after_ok =
+                        col + wb.len() >= bytes.len() || !is_ident(bytes[col + wb.len()]);
 
                     if before_ok && after_ok {
                         let call_ok = !is_callable || {
@@ -52,13 +50,19 @@ pub fn get_references(
                         };
 
                         if call_ok {
-                            let start = Position { line: line_idx as u32, character: col as u32 };
+                            let start = Position {
+                                line: to_u32(line_idx),
+                                character: to_u32(col),
+                            };
                             let end = Position {
-                                line: line_idx as u32,
-                                character: (col + wb.len()) as u32,
+                                line: to_u32(line_idx),
+                                character: to_u32(col + wb.len()),
                             };
                             if let Ok(loc_uri) = doc_uri.parse::<Url>() {
-                                locations.push(Location { uri: loc_uri, range: Range { start, end } });
+                                locations.push(Location {
+                                    uri: loc_uri,
+                                    range: Range { start, end },
+                                });
                             }
                         }
                     }
@@ -105,7 +109,7 @@ fn resolve_callable(
     let mut found_as_func = false;
     let mut found_as_non_func = false;
 
-    for entry in state.open_docs.iter() {
+    for entry in &state.open_docs {
         if let Some(parsed) = state.get_parsed(entry.key().as_str()) {
             for sym in &parsed.symbols {
                 if sym.name == name {
@@ -136,23 +140,11 @@ fn is_func_kind(kind: &SymbolKind) -> bool {
 }
 
 fn word_at(text: &str, line: u32, col: u32) -> Option<String> {
-    let line_str = text.lines().nth(line as usize)?;
-    let bytes = line_str.as_bytes();
-    let col = col as usize;
-    if col > bytes.len() {
-        return None;
-    }
-    let is_ident = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
-    let mut start = col;
-    while start > 0 && is_ident(bytes[start - 1]) {
-        start -= 1;
-    }
-    let mut end = col;
-    while end < bytes.len() && is_ident(bytes[end]) {
-        end += 1;
-    }
-    if start == end {
-        return None;
-    }
-    Some(line_str[start..end].to_string())
+    crate::text::word_at(
+        text,
+        Position {
+            line,
+            character: col,
+        },
+    )
 }

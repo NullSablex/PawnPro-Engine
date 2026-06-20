@@ -1,18 +1,20 @@
 use std::collections::HashSet;
 use std::path::Path;
 
-use once_cell::sync::Lazy;
 use regex::Regex;
 
-use crate::messages::{msg, Locale, MsgKey};
+use crate::messages::{Locale, MsgKey, msg};
 use crate::parser::lexer::strip_line_comments;
 use crate::parser::{ParsedFile, SymbolKind};
 
 use super::includes::ResolvedIncludes;
 use super::{codes, diagnostic::PawnDiagnostic};
+use crate::util::to_u32;
 
-static RX_CALL: Lazy<Regex> = Lazy::new(|| Regex::new(r"\b([A-Za-z_]\w*)\s*\(").unwrap());
-static RX_IDENT: Lazy<Regex> = Lazy::new(|| Regex::new(r"\b([A-Za-z_]\w*)\b").unwrap());
+static RX_CALL: std::sync::LazyLock<Regex> =
+    std::sync::LazyLock::new(|| Regex::new(r"\b([A-Za-z_]\w*)\s*\(").unwrap());
+static RX_IDENT: std::sync::LazyLock<Regex> =
+    std::sync::LazyLock::new(|| Regex::new(r"\b([A-Za-z_]\w*)\b").unwrap());
 
 #[derive(Clone, Copy)]
 enum CollectMode {
@@ -37,10 +39,17 @@ fn collect_idents(text: &str, mode: CollectMode) -> HashSet<String> {
             continue;
         }
 
-        let kw = |k: &str| trimmed_lower.starts_with(&format!("{} ", k)) || trimmed_lower.starts_with(&format!("{}\t", k));
+        let kw = |k: &str| {
+            trimmed_lower.starts_with(&format!("{k} "))
+                || trimmed_lower.starts_with(&format!("{k}\t"))
+        };
         let skip = match mode {
-            CollectMode::Calls => kw("stock") || kw("public") || kw("static") || kw("native") || kw("forward"),
-            CollectMode::AllIdents => kw("new") || kw("const") || (kw("static") && !stripped.text.contains('(')),
+            CollectMode::Calls => {
+                kw("stock") || kw("public") || kw("static") || kw("native") || kw("forward")
+            }
+            CollectMode::AllIdents => {
+                kw("new") || kw("const") || (kw("static") && !stripped.text.contains('('))
+            }
             CollectMode::IdentsNoDefineLines => trimmed.starts_with('#'),
         };
 
@@ -61,6 +70,12 @@ fn collect_idents(text: &str, mode: CollectMode) -> HashSet<String> {
     out
 }
 
+// Sequência de fases: coleta de identificadores (local + includes + workspace)
+// seguida de uma verificação de "não usado" por SymbolKind (Variable, Stock,
+// Native, Forward, Plain), cada uma com seu código de diagnóstico. As fases são
+// lineares e independentes; separá-las exigiria devolver/passar vários conjuntos
+// de identificadores, sem ganho real de clareza.
+#[allow(clippy::too_many_lines)]
 pub fn analyze_unused(
     text: &str,
     file_path: &Path,
@@ -87,77 +102,132 @@ pub fn analyze_unused(
         if let Some(entry) = resolved.files.get(fp) {
             all_calls.extend(collect_idents(&entry.text, CollectMode::Calls));
             all_idents_ws.extend(collect_idents(&entry.text, CollectMode::AllIdents));
-            all_idents_no_directives.extend(collect_idents(&entry.text, CollectMode::IdentsNoDefineLines));
+            all_idents_no_directives.extend(collect_idents(
+                &entry.text,
+                CollectMode::IdentsNoDefineLines,
+            ));
         }
     }
     if let Some(root) = workspace_root {
-        collect_workspace_all(root, file_path, &mut all_calls, &mut all_idents_ws, &mut all_idents_no_directives);
+        collect_workspace_all(
+            root,
+            file_path,
+            &mut all_calls,
+            &mut all_idents_ws,
+            &mut all_idents_no_directives,
+        );
     }
 
-    for sym in parsed.symbols.iter().filter(|s| matches!(s.kind, SymbolKind::Variable)) {
-        if sym.name.starts_with('_') { continue; }
+    for sym in parsed
+        .symbols
+        .iter()
+        .filter(|s| matches!(s.kind, SymbolKind::Variable))
+    {
+        if sym.name.starts_with('_') {
+            continue;
+        }
         if !all_idents_ws.contains(&sym.name) {
             diags.push(PawnDiagnostic::unnecessary_warning(
-                sym.line, sym.col, sym.col + sym.name.len() as u32,
+                sym.line,
+                sym.col,
+                sym.col + to_u32(sym.name.len()),
                 codes::PP0005,
                 msg(locale, MsgKey::VarUnused).replace("{}", &sym.name),
             ));
         }
     }
 
-    for sym in parsed.symbols.iter()
+    for sym in parsed
+        .symbols
+        .iter()
         .filter(|s| matches!(s.kind, SymbolKind::Stock | SymbolKind::Static))
     {
-        if sym.name.starts_with('_') { continue; }
+        if sym.name.starts_with('_') {
+            continue;
+        }
         if !all_calls.contains(&sym.name) {
             diags.push(PawnDiagnostic::unnecessary_warning(
-                sym.line, sym.col, sym.col + sym.name.len() as u32,
+                sym.line,
+                sym.col,
+                sym.col + to_u32(sym.name.len()),
                 codes::PP0006,
                 msg(locale, MsgKey::StockUnused).replace("{}", &sym.name),
             ));
         }
     }
 
-    for sym in parsed.symbols.iter().filter(|s| matches!(s.kind, SymbolKind::Native)) {
-        if sym.name.starts_with('_') { continue; }
+    for sym in parsed
+        .symbols
+        .iter()
+        .filter(|s| matches!(s.kind, SymbolKind::Native))
+    {
+        if sym.name.starts_with('_') {
+            continue;
+        }
         if !all_calls.contains(&sym.name) {
             diags.push(PawnDiagnostic::hint(
-                sym.line, sym.col, sym.col + sym.name.len() as u32,
+                sym.line,
+                sym.col,
+                sym.col + to_u32(sym.name.len()),
                 codes::PP0014,
                 msg(locale, MsgKey::NativeNeverCalled).replace("{}", &sym.name),
             ));
         }
     }
 
-    for sym in parsed.symbols.iter().filter(|s| matches!(s.kind, SymbolKind::Forward)) {
-        if sym.name.starts_with('_') { continue; }
+    for sym in parsed
+        .symbols
+        .iter()
+        .filter(|s| matches!(s.kind, SymbolKind::Forward))
+    {
+        if sym.name.starts_with('_') {
+            continue;
+        }
         if !all_calls.contains(&sym.name) {
             diags.push(PawnDiagnostic::hint(
-                sym.line, sym.col, sym.col + sym.name.len() as u32,
+                sym.line,
+                sym.col,
+                sym.col + to_u32(sym.name.len()),
                 codes::PP0015,
                 msg(locale, MsgKey::ForwardNeverCalled).replace("{}", &sym.name),
             ));
         }
     }
 
-    for sym in parsed.symbols.iter().filter(|s| matches!(s.kind, SymbolKind::Plain)) {
-        if sym.name.starts_with('_') { continue; }
+    for sym in parsed
+        .symbols
+        .iter()
+        .filter(|s| matches!(s.kind, SymbolKind::Plain))
+    {
+        if sym.name.starts_with('_') {
+            continue;
+        }
         if !all_calls.contains(&sym.name) {
             diags.push(PawnDiagnostic::unnecessary_warning(
-                sym.line, sym.col, sym.col + sym.name.len() as u32,
+                sym.line,
+                sym.col,
+                sym.col + to_u32(sym.name.len()),
                 codes::PP0016,
                 msg(locale, MsgKey::FuncNeverCalled).replace("{}", &sym.name),
             ));
         }
     }
 
-    for sym in parsed.symbols.iter().filter(|s| matches!(s.kind, SymbolKind::Define)) {
-        if sym.name.starts_with('_') { continue; }
+    for sym in parsed
+        .symbols
+        .iter()
+        .filter(|s| matches!(s.kind, SymbolKind::Define))
+    {
+        if sym.name.starts_with('_') {
+            continue;
+        }
         let used_as_ident = all_idents_no_directives.contains(&sym.name);
         let used_as_call = all_calls.contains(&sym.name);
         if !used_as_ident && !used_as_call {
             diags.push(PawnDiagnostic::hint(
-                sym.line, sym.col, sym.col + sym.name.len() as u32,
+                sym.line,
+                sym.col,
+                sym.col + to_u32(sym.name.len()),
                 codes::PP0011,
                 msg(locale, MsgKey::DefineUnused).replace("{}", &sym.name),
             ));
@@ -165,15 +235,21 @@ pub fn analyze_unused(
     }
 
     for inc in &parsed.includes {
-        let Some(rp) = find_resolved_path(inc, &resolved.paths) else { continue };
+        let Some(rp) = find_resolved_path(inc, &resolved.paths) else {
+            continue;
+        };
 
         let exported = collect_transitive_exports(rp, resolved);
 
-        if exported.is_empty() { continue; }
+        if exported.is_empty() {
+            continue;
+        }
 
         if !exported.iter().any(|name| all_idents_ws.contains(name)) {
             diags.push(PawnDiagnostic::hint(
-                inc.line, inc.col, inc.col + inc.token.len() as u32,
+                inc.line,
+                inc.col,
+                inc.col + to_u32(inc.token.len()),
                 codes::PP0012,
                 msg(locale, MsgKey::IncludeNoSymbolsUsed).replace("{}", &inc.token),
             ));
@@ -185,30 +261,38 @@ pub fn analyze_unused(
 
 fn is_include_file(path: &Path) -> bool {
     matches!(
-        path.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase()).as_deref(),
-        Some("inc") | Some("p") | Some("pawn")
+        path.extension()
+            .and_then(|e| e.to_str())
+            .map(str::to_ascii_lowercase)
+            .as_deref(),
+        Some("inc" | "p" | "pawn")
     )
 }
 
-fn workspace_files<'a>(root: &'a Path, exclude: &'a Path) -> impl Iterator<Item = std::path::PathBuf> + 'a {
+fn workspace_files<'a>(
+    root: &'a Path,
+    exclude: &'a Path,
+) -> impl Iterator<Item = std::path::PathBuf> + 'a {
     walkdir::WalkDir::new(root)
         .follow_links(false)
         .into_iter()
-        .filter_map(|e| e.ok())
+        .filter_map(std::result::Result::ok)
         .filter(move |e| {
             e.file_type().is_file() && {
                 let p = e.path();
-                p != exclude && matches!(
-                    p.extension().and_then(|x| x.to_str()),
-                    Some("pwn") | Some("inc") | Some("p") | Some("pawn")
-                )
+                p != exclude
+                    && matches!(
+                        p.extension().and_then(|x| x.to_str()),
+                        Some("pwn" | "inc" | "p" | "pawn")
+                    )
             }
         })
-        .map(|e| e.into_path())
+        .map(walkdir::DirEntry::into_path)
 }
 
 fn collect_workspace_all(
-    root: &Path, exclude: &Path,
+    root: &Path,
+    exclude: &Path,
     calls: &mut HashSet<String>,
     all_idents: &mut HashSet<String>,
     no_directives: &mut HashSet<String>,
@@ -236,7 +320,9 @@ fn collect_transitive_exports(
         if !visited.insert(path) {
             continue;
         }
-        let Some(entry) = resolved.files.get(path) else { continue };
+        let Some(entry) = resolved.files.get(path) else {
+            continue;
+        };
         exported.extend(entry.parsed.symbols.iter().map(|s| s.name.clone()));
         exported.extend(entry.parsed.macro_names.iter().cloned());
 

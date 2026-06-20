@@ -6,6 +6,8 @@
   [![Rust](https://img.shields.io/badge/rust-stable-orange?style=flat-square&logo=rust)](https://www.rust-lang.org)
   [![LSP](https://img.shields.io/badge/protocolo-LSP-informational?style=flat-square)](https://microsoft.github.io/language-server-protocol/)
   [![Clippy](https://img.shields.io/github/actions/workflow/status/NullSablex/PawnPro-Engine/ci.yml?style=flat-square&label=Clippy&logo=rust)](https://github.com/NullSablex/PawnPro-Engine/actions/workflows/ci.yml)
+  [![Security Audit](https://img.shields.io/github/actions/workflow/status/NullSablex/PawnPro-Engine/ci.yml?style=flat-square&label=Security%20Audit&logo=rust)](https://github.com/NullSablex/PawnPro-Engine/actions/workflows/ci.yml)
+  [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/NullSablex/PawnPro-Engine/badge?style=flat-square)](https://scorecard.dev/viewer/?uri=github.com/NullSablex/PawnPro-Engine)
   [![License](https://img.shields.io/badge/licença-Source--Available-blue?style=flat-square)](LICENSE.md)
 
   ![Windows x64](https://img.shields.io/badge/Windows-x64-0078D4?style=flat-square&logo=windows11&logoColor=white)
