@@ -13,7 +13,7 @@ caso encontre por favor relate para ajudar a manter a consistência dos dados.
 
 ---
 
-## [1.2.0] - 18/06/2026
+## [1.2.0] - 20/06/2026
 
 ### Adicionado
 
