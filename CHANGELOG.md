@@ -68,7 +68,7 @@ caso encontre por favor relate para ajudar a manter a consistência dos dados.
 - **Cobertura de testes ampliada** — formatador, indentação, naming (regras/locais/estilo/sugestão), rename, quick fix de remoção e utilitários de texto.
 - **`code_action` modularizado** — separado em `naming_actions` / `removal_actions` com helpers de edição reutilizáveis, em vez de uma função única.
 - **Deploy da documentação por GitHub Actions** — `docs.yml` deixou de publicar pela branch `gh-pages` (`mkdocs gh-deploy`) e passou ao pipeline oficial de Pages (`actions/upload-pages-artifact` + `actions/deploy-pages`), sem `contents: write`; build com `--strict`. Dispara apenas quando `docs/**` ou `mkdocs.yml` mudam.
-- **Dependências de CI pinadas** — todas as GitHub Actions de todos os workflows (`ci`, `docs`, `release`, `scorecard`) são referenciadas por commit SHA (com a versão em comentário); o deploy de docs fixa `mkdocs-material` numa versão exata. Atende à boa prática de dependências pinadas do OpenSSF Scorecard.
+- **Dependências de CI pinadas** — todas as GitHub Actions de todos os workflows (`ci`, `docs`, `release`, `scorecard`) são referenciadas por commit SHA (com a versão em comentário); o deploy de docs usa `pip install --require-hashes` sobre um `docs/requirements.txt` com hash de cada dependência. Atende à boa prática de dependências pinadas do OpenSSF Scorecard.
 
 ---
 
