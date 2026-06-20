@@ -96,7 +96,7 @@ fn is_upper(s: &str) -> bool {
 /// `Carregar_Lixeiras` e também `Palavrao` (uma palavra): cada segmento separado
 /// por `_` começa com maiúscula e contém ao menos uma minúscula. O `_` é
 /// opcional — uma palavra só capitalizada degenera nesse estilo, exatamente como
-/// em PascalCase. A exigência de minúscula em cada segmento distingue de
+/// em `PascalCase`. A exigência de minúscula em cada segmento distingue de
 /// `UPPER_CASE` (`MAX_PLAYERS`), onde os segmentos são todos maiúsculos.
 fn is_cap_snake(s: &str) -> bool {
     if !s.chars().any(|c| c.is_ascii_lowercase()) {
