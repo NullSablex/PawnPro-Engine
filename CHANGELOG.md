@@ -66,6 +66,8 @@ caso encontre por favor relate para ajudar a manter a consistência dos dados.
 - **Dependência morta removida** — `once_cell` (substituída por `std::sync::LazyLock`).
 - **Cobertura de testes ampliada** — formatador, indentação, naming (regras/locais/estilo/sugestão), rename, quick fix de remoção e utilitários de texto.
 - **`code_action` modularizado** — separado em `naming_actions` / `removal_actions` com helpers de edição reutilizáveis, em vez de uma função única.
+- **Deploy da documentação por GitHub Actions** — `docs.yml` deixou de publicar pela branch `gh-pages` (`mkdocs gh-deploy`) e passou ao pipeline oficial de Pages (`actions/upload-pages-artifact` + `actions/deploy-pages`), sem `contents: write`; build com `--strict`. Dispara apenas quando `docs/**` ou `mkdocs.yml` mudam.
+- **Actions pinadas por SHA** — `scorecard.yml` passou a referenciar `checkout`, `scorecard-action` e `codeql-action` por commit fixo (corrige a referência inexistente `scorecard-action@v2` e atende a boa prática de dependências pinadas).
 
 ---
 
