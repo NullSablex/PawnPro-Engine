@@ -35,6 +35,7 @@ caso encontre por favor relate para ajudar a manter a consistência dos dados.
 
 #### Motor de formatação guiado por estrutura
 - Reescrita do formatador sobre a `StmtTree` (indentação estrutural real) com **presets** Allman/K&R/Compacto/Custom e ajustes finos, validados contra o `pawncc` como oráculo.
+- **Strings de continuação de linha preservadas** — literais quebrados com `\` no fim da linha (ex.: lista de itens de `ShowPlayerDialog`) mantêm seu conteúdo intacto; os `{...}` de cores embutidas não são mais interpretados como blocos nem reindentados.
 
 ### Corrigido
 

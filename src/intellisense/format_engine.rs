@@ -452,6 +452,20 @@ mod tests {
         assert_eq!(out, "main()\n{\n\tprint(\"{ }\");\n}\n");
     }
 
+    // Regressão: string literal continuada com `\` no fim da linha. O conteúdo
+    // continuado (incluindo `{cor}` de embeds tipo dialog) NÃO pode ser lido como
+    // código — os `{`/`}` não viram blocos e os espaços à esquerda (conteúdo da
+    // string) são preservados.
+    #[test]
+    fn line_continued_string_is_not_split() {
+        let src = "main()\n{\nf(\"{38b170}Axe\\n\\\n{8bcffa}Blues\");\n}\n";
+        let out = fmt(src, Preset::Allman);
+        // A linha de continuação fica literal; nenhum `{`/`}` da string vira bloco.
+        assert!(out.contains("{8bcffa}Blues"), "saída: {out:?}");
+        assert!(!out.contains("{\n8bcffa"), "cor virou bloco: {out:?}");
+        assert!(!out.contains("8bcffa\n}"), "cor virou bloco: {out:?}");
+    }
+
     // Idempotência em todos os presets: formatar a saída não a altera.
     #[test]
     fn idempotent_all_presets() {

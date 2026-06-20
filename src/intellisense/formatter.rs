@@ -116,9 +116,14 @@ fn compute_indent_at_line(text: &str, target_line: usize) -> i32 {
 /// `{`/`}`/statement. Blocos vazios `{}` são preservados.
 pub(super) fn split_braces_to_own_lines(text: &str) -> String {
     let mut out = String::with_capacity(text.len() + 16);
+    // Estado de string que ATRAVESSA linhas: em Pawn, uma string literal terminada
+    // com `\` no fim físico da linha continua na linha seguinte. Sem carregar isso,
+    // o conteúdo continuado (ex.: `{38b170}` de uma cor) seria lido como código e
+    // os `{`/`}` virariam blocos. Carrega-se apenas para strings ("), não chars.
+    let mut str_continues = false;
     for raw in text.lines() {
         let mut seg = String::new();
-        let mut in_str = false;
+        let mut in_str = str_continues;
         let mut in_char = false;
         let mut in_line_comment = false;
         let chars: Vec<char> = raw.chars().collect();
@@ -187,7 +192,18 @@ pub(super) fn split_braces_to_own_lines(text: &str) -> String {
             }
             i += 1;
         }
-        if !seg.trim().is_empty() {
+        // A string continua na próxima linha quando ficou aberta e a linha física
+        // termina com `\` (continuação). Nesse caso os espaços à esquerda da linha
+        // seguinte são CONTEÚDO da string — não podem ser trimados.
+        let was_continuation = str_continues;
+        str_continues = in_str && raw.ends_with('\\');
+
+        if was_continuation {
+            // Linha (ou início dela) faz parte de uma string aberta na anterior:
+            // preserva-se literal, sem trim e sem split de chaves.
+            out.push_str(raw);
+            out.push('\n');
+        } else if !seg.trim().is_empty() {
             out.push_str(seg.trim());
             out.push('\n');
         } else if raw.trim().is_empty() {
