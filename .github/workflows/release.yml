@@ -100,6 +100,11 @@ jobs:
       contents: write
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+
       - name: Download all artifacts
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
@@ -113,9 +118,42 @@ jobs:
           echo "--- checksums ---"
           cat checksums.sha256
 
+      - name: Build release body
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+
+          # 1. Seção curada do CHANGELOG.md (cabeçalho "## [VERSÃO] - data"),
+          # aparando linhas em branco e separador "---" do fim.
+          BODY=$(awk "/^## \[?v?${VERSION}\]?/{found=1; next} found && /^## /{exit} found{print}" CHANGELOG.md \
+            | awk '{lines[NR]=$0} END{n=NR; while(n>0 && (lines[n] ~ /^[[:space:]]*$/ || lines[n] ~ /^---[[:space:]]*$/)) n--; for(i=1;i<=n;i++) print lines[i]}')
+          if [ -z "$BODY" ]; then
+            BODY="Consulte o [CHANGELOG.md](CHANGELOG.md) para detalhes."
+          fi
+
+          # 2. Notas automáticas — só o bloco "New Contributors" e o link
+          # "Full Changelog"; a categorização auto é descartada.
+          AUTO=$(gh api -X POST "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
+            -f tag_name="$TAG" -q .body 2>/dev/null || echo "")
+          APPENDIX=$(echo "$AUTO" | sed -n '/^## New Contributors$/,$p')
+          if [ -z "$APPENDIX" ]; then
+            APPENDIX=$(echo "$AUTO" | grep '^\*\*Full Changelog\*\*' | tail -1)
+          fi
+
+          {
+            echo "$BODY"
+            if [ -n "$APPENDIX" ]; then
+              printf '\n---\n\n%s\n' "$APPENDIX"
+            fi
+          } > release_body.md
+
+          cat release_body.md
+
       - name: Create Release and upload binaries
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           files: dist/*
-          generate_release_notes: true
+          body_path: release_body.md
           fail_on_unmatched_files: true
