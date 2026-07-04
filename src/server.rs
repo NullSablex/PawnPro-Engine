@@ -438,7 +438,13 @@ fn parse_format_style(get: impl Fn(&str) -> Option<Value>) -> Option<intellisens
     let brace = get("formatBraceStyle");
     let space_ops = get("formatSpaceAroundOperators");
     let empty_same = get("formatEmptyBlockSameLine");
-    if preset_name.is_none() && brace.is_none() && space_ops.is_none() && empty_same.is_none() {
+    let preserve_align = get("formatPreserveArrayAlignment");
+    if preset_name.is_none()
+        && brace.is_none()
+        && space_ops.is_none()
+        && empty_same.is_none()
+        && preserve_align.is_none()
+    {
         return None;
     }
 
@@ -459,6 +465,9 @@ fn parse_format_style(get: impl Fn(&str) -> Option<Value>) -> Option<intellisens
     }
     if let Some(e) = empty_same.as_ref().and_then(serde_json::Value::as_bool) {
         style.empty_block_same_line = e;
+    }
+    if let Some(p) = preserve_align.as_ref().and_then(serde_json::Value::as_bool) {
+        style.preserve_array_alignment = p;
     }
     Some(style)
 }
@@ -708,23 +717,28 @@ fn naming_actions(
     if !cfg.enabled {
         return;
     }
-    let pos = params.range.start;
-    let Some(name) = crate::text::word_at(text, pos) else {
-        return;
-    };
-    for suggestion in crate::naming::suggestions_for(&name, cfg) {
-        let Some(edit) = intellisense::get_rename(state, uri, pos, &suggestion) else {
+    // Ancorar no diagnóstico PP0018 (não na palavra crua sob o cursor): o
+    // analyzer já posiciona o diagnóstico no identificador do símbolo. Isso
+    // evita oferecer renomeação para keywords (`stock`/`public`/`new`...) e para
+    // tokens dentro de comentários — que nunca geram PP0018.
+    for diag in diagnostics_with_code(params, "PP0018") {
+        let pos = diag.range.start;
+        let Some(name) = crate::text::word_at(text, pos) else {
             continue;
         };
-        let diagnostics = diagnostics_with_code(params, "PP0018");
-        actions.push(CodeActionOrCommand::CodeAction(CodeAction {
-            title: format!("Renomear \"{name}\" para \"{suggestion}\""),
-            kind: Some(CodeActionKind::QUICKFIX),
-            diagnostics: (!diagnostics.is_empty()).then_some(diagnostics),
-            edit: Some(edit),
-            is_preferred: Some(true),
-            ..Default::default()
-        }));
+        for suggestion in crate::naming::suggestions_for(&name, cfg) {
+            let Some(edit) = intellisense::get_rename(state, uri, pos, &suggestion) else {
+                continue;
+            };
+            actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+                title: format!("Renomear \"{name}\" para \"{suggestion}\""),
+                kind: Some(CodeActionKind::QUICKFIX),
+                diagnostics: Some(vec![diag.clone()]),
+                edit: Some(edit),
+                is_preferred: Some(true),
+                ..Default::default()
+            }));
+        }
     }
 }
 

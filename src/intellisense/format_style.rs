@@ -55,6 +55,10 @@ pub struct FormatStyle {
     /// Colapsa o corpo de um controle de um único statement (sem chaves) na mesma
     /// linha: `if (x)\n foo();` vira `if (x) foo();`. Estilo do preset Compacto.
     pub collapse_single_body: bool,
+    /// Preserva o alinhamento manual em colunas de inicializadores de array `{ }`
+    /// multi-linha: as linhas internas saem intactas (sem colapsar os espaços de
+    /// alinhamento nem re-indentar). Opt-in — o padrão é re-indentar como o resto.
+    pub preserve_array_alignment: bool,
 }
 
 impl Default for FormatStyle {
@@ -81,6 +85,8 @@ impl FormatStyle {
             empty_block_same_line: true,
             // Só o Compacto colapsa corpos de statement único na mesma linha.
             collapse_single_body: matches!(preset, Preset::Compact),
+            // Opt-in em todos os presets; ligado pela config do usuário.
+            preserve_array_alignment: false,
         }
     }
 

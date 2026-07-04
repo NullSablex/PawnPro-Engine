@@ -13,6 +13,24 @@ caso encontre por favor relate para ajudar a manter a consistência dos dados.
 
 ---
 
+## [1.3.0] - 04/07/2026
+
+### Adicionado
+- **Preservar alinhamento de arrays no formatador** — nova opção
+  `formatPreserveArrayAlignment` (via `initializationOptions`): quando ligada, o
+  formatador mantém intacto o alinhamento manual em colunas de inicializadores de
+  array `{ }` quebrados em várias linhas — as linhas internas saem sem colapsar os
+  espaços de alinhamento nem re-indentar. Opt-in; o padrão continua re-indentando.
+
+### Corrigido
+- **Quick fix de nomes (`PP0018`) atuava em comentários e keywords** ([#5]) — a code action de nomenclatura passou a ancorar no **diagnóstico** já emitido (que aponta o identificador real do símbolo), em vez da palavra crua sob o cursor. Com isso, deixa de oferecer renomeação para tokens dentro de comentários (`//`, `/* */`) e para a keyword da declaração (`stock`/`public`/`new`/`#define`...), sugerindo apenas o nome do símbolo.
+- **Formatador achatava declaração `new` multilinha** — uma lista de variáveis num único `new`/`static`/`const`/`decl` quebrada em várias linhas por vírgulas era realinhada indevidamente; agora as linhas de continuação são reconhecidas como parte da mesma declaração e mantêm a indentação.
+- **Aviso de deprecação do Node 20 no CI** — `actions/checkout`, `actions/deploy-pages` e `softprops/action-gh-release` subiram para versões baseadas em Node 24, eliminando o alerta dos runners do GitHub na geração de artefatos da engine.
+
+[#5]: https://github.com/NullSablex/PawnPro-Engine/issues/5
+
+---
+
 ## [1.2.0] - 21/06/2026
 
 ### Adicionado
