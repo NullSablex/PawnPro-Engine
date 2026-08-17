@@ -15,7 +15,9 @@ pub fn get(key: MsgKey) -> &'static str {
         MsgKey::IncludeRelativeTo => ". Cale relativă de la: {}",
         MsgKey::NativeHasBody => "Funcția native \"{}\" nu poate avea corp",
         MsgKey::ForwardHasBody => "Declarația forward \"{}\" nu poate avea corp",
-        MsgKey::DeclNoBody => "Declarația {} \"{}\" nu are corp. Folosește \"forward\" pentru prototipuri.",
+        MsgKey::DeclNoBody => {
+            "Declarația {} \"{}\" nu are corp. Folosește \"forward\" pentru prototipuri."
+        }
         MsgKey::VarUnused => "variabila \"{}\" declarată dar niciodată folosită",
         MsgKey::StockUnused => "funcția stock \"{}\" declarată dar niciodată folosită",
         MsgKey::SymDeprecated => "\"{}\" este marcat ca învechit",
@@ -27,12 +29,16 @@ pub fn get(key: MsgKey) -> &'static str {
             "\"{}\" nu este declarat — verifică dacă include-ul corect este prezent"
         }
         MsgKey::DefineUnused => "\"{}\" definit dar niciodată folosit",
-        MsgKey::IncludeNoSymbolsUsed => "\"{}\" inclus dar niciunul dintre simbolurile sale nu este folosit",
+        MsgKey::IncludeNoSymbolsUsed => {
+            "\"{}\" inclus dar niciunul dintre simbolurile sale nu este folosit"
+        }
         MsgKey::TryIncludeNotFound => "\"{}\" negăsit — #tryinclude ignorat de compilator",
         MsgKey::NativeNeverCalled => "native \"{}\" declarat dar niciodată apelat",
         MsgKey::ForwardNeverCalled => "forward \"{}\" declarat dar niciodată apelat",
         MsgKey::FuncNeverCalled => "funcția \"{}\" declarată dar niciodată apelată",
-        MsgKey::IndentInconsistent => "Indentare inconsecventă: se așteptau {} coloane, s-au găsit {}",
+        MsgKey::IndentInconsistent => {
+            "Indentare inconsecventă: se așteptau {} coloane, s-au găsit {}"
+        }
         MsgKey::RefsZero => "0 referințe",
         MsgKey::RefsOne => "1 referință",
         MsgKey::RefsMany => "{n} referințe",

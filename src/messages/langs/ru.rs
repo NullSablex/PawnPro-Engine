@@ -15,7 +15,9 @@ pub fn get(key: MsgKey) -> &'static str {
         MsgKey::IncludeRelativeTo => ". Относительный путь от: {}",
         MsgKey::NativeHasBody => "Функция native \"{}\" не может иметь тело",
         MsgKey::ForwardHasBody => "Объявление forward \"{}\" не может иметь тело",
-        MsgKey::DeclNoBody => "Объявление {} \"{}\" не имеет тела. Используйте \"forward\" для прототипов.",
+        MsgKey::DeclNoBody => {
+            "Объявление {} \"{}\" не имеет тела. Используйте \"forward\" для прототипов."
+        }
         MsgKey::VarUnused => "переменная \"{}\" объявлена, но не используется",
         MsgKey::StockUnused => "stock-функция \"{}\" объявлена, но не используется",
         MsgKey::SymDeprecated => "\"{}\" помечен как устаревший",
@@ -23,11 +25,11 @@ pub fn get(key: MsgKey) -> &'static str {
         MsgKey::SymFromDeprecatedFile => "\"{}\" принадлежит устаревшему include",
         MsgKey::IncludeDeprecated => "\"{}\" устарел",
         MsgKey::ParamUnused => "Параметр \"{}\" объявлен, но не используется",
-        MsgKey::SymbolUndeclared => {
-            "\"{}\" не объявлен — проверьте, что подключён нужный include"
-        }
+        MsgKey::SymbolUndeclared => "\"{}\" не объявлен — проверьте, что подключён нужный include",
         MsgKey::DefineUnused => "\"{}\" определён, но не используется",
-        MsgKey::IncludeNoSymbolsUsed => "\"{}\" подключён, но ни один из его символов не используется",
+        MsgKey::IncludeNoSymbolsUsed => {
+            "\"{}\" подключён, но ни один из его символов не используется"
+        }
         MsgKey::TryIncludeNotFound => "\"{}\" не найден — #tryinclude проигнорирован компилятором",
         MsgKey::NativeNeverCalled => "native \"{}\" объявлен, но не вызывается",
         MsgKey::ForwardNeverCalled => "forward \"{}\" объявлен, но не вызывается",

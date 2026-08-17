@@ -15,7 +15,9 @@ pub fn get(key: MsgKey) -> &'static str {
         MsgKey::IncludeRelativeTo => ". Ruta relativa desde: {}",
         MsgKey::NativeHasBody => "La función native \"{}\" no puede tener cuerpo",
         MsgKey::ForwardHasBody => "La declaración forward \"{}\" no puede tener cuerpo",
-        MsgKey::DeclNoBody => "La declaración {} \"{}\" no tiene cuerpo. Usa \"forward\" para prototipos.",
+        MsgKey::DeclNoBody => {
+            "La declaración {} \"{}\" no tiene cuerpo. Usa \"forward\" para prototipos."
+        }
         MsgKey::VarUnused => "variable \"{}\" declarada pero nunca usada",
         MsgKey::StockUnused => "función stock \"{}\" declarada pero nunca usada",
         MsgKey::SymDeprecated => "\"{}\" está marcado como obsoleto",
@@ -28,11 +30,15 @@ pub fn get(key: MsgKey) -> &'static str {
         }
         MsgKey::DefineUnused => "\"{}\" definido pero nunca usado",
         MsgKey::IncludeNoSymbolsUsed => "\"{}\" incluido pero no se usa ninguno de sus símbolos",
-        MsgKey::TryIncludeNotFound => "\"{}\" no encontrado — #tryinclude ignorado por el compilador",
+        MsgKey::TryIncludeNotFound => {
+            "\"{}\" no encontrado — #tryinclude ignorado por el compilador"
+        }
         MsgKey::NativeNeverCalled => "native \"{}\" declarado pero nunca llamado",
         MsgKey::ForwardNeverCalled => "forward \"{}\" declarado pero nunca llamado",
         MsgKey::FuncNeverCalled => "función \"{}\" declarada pero nunca llamada",
-        MsgKey::IndentInconsistent => "Indentación inconsistente: se esperaban {} columnas, se encontraron {}",
+        MsgKey::IndentInconsistent => {
+            "Indentación inconsistente: se esperaban {} columnas, se encontraron {}"
+        }
         MsgKey::RefsZero => "0 referencias",
         MsgKey::RefsOne => "1 referencia",
         MsgKey::RefsMany => "{n} referencias",
