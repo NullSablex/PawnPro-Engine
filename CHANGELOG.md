@@ -13,6 +13,17 @@ caso encontre por favor relate para ajudar a manter a consistência dos dados.
 
 ---
 
+## [Unreleased]
+
+### Adicionado
+- **Diagnósticos e hovers traduzidos para Espanhol, Romeno e Russo** — as tabelas
+  de mensagens `messages/langs/{es,ro,ru}.rs` existiam como esqueleto (texto ainda
+  em inglês, copiado de `en.rs`) e agora estão de fato traduzidas: as 75 mensagens
+  (diagnósticos PP*, contadores de referências do CodeLens e descrições de hover
+  de palavras-chave) saem no idioma resolvido por `Locale::from_str`. Marcadores
+  `{}` / `{n}` / `{style}` preservados; termos técnicos do Pawn (`native`,
+  `forward`, `stock`, `public`, `static`, `enum`) mantidos em inglês
+
 ## [1.3.0] - 04/07/2026
 
 ### Adicionado
