@@ -1,7 +1,7 @@
 //! Normalização de comentários de documentação.
 //!
 //! Duas convenções circulam no ecossistema Pawn e ambas precisam render o mesmo
-//! resultado: o estilo Javadoc (`@param`, `@return`) e o XMLdoc herdado do C#
+//! resultado: o estilo Javadoc (`@param`, `@return`) e o `XMLdoc` herdado do C#
 //! que o `omp-stdlib` usa (`<summary>`, `<param name="...">`), cujas tags são
 //! lidas pelo gerador da wiki do open.mp.
 
@@ -20,7 +20,7 @@ pub struct DocComment {
     /// Parâmetros na ordem em que aparecem no comentário.
     pub params: Vec<DocParam>,
     pub returns: Option<String>,
-    /// `<remarks>` do XMLdoc, ou `@remarks` / `@note`.
+    /// `<remarks>` do `XMLdoc`, ou `@remarks` / `@note`.
     pub remarks: Option<String>,
 }
 
@@ -112,7 +112,7 @@ pub struct DocLabels {
 }
 
 /// Remove os marcadores do bloco (`/**`, `*`, `*/`, `//`) preservando a
-/// indentação relativa do texto — que separa parágrafos no XMLdoc.
+/// indentação relativa do texto — que separa parágrafos no `XMLdoc`.
 fn strip_markers(doc: &str) -> Vec<String> {
     let mut out = Vec::new();
     for raw in doc.lines() {
@@ -221,7 +221,7 @@ fn decode_entities(s: &str) -> String {
         .replace("&amp;", "&")
 }
 
-/// Junta linhas em um parágrafo, colapsando espaços — o XMLdoc do open.mp
+/// Junta linhas em um parágrafo, colapsando espaços — o `XMLdoc` do open.mp
 /// quebra frases em qualquer coluna e a quebra não é significativa.
 fn join_wrapped(lines: &[String]) -> String {
     let mut paragraphs: Vec<String> = Vec::new();
