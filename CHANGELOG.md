@@ -13,9 +13,29 @@ caso encontre por favor relate para ajudar a manter a consistência dos dados.
 
 ---
 
-## [Unreleased]
+## [1.4.0] - 30/08/2026
 
 ### Adicionado
+- **Comentários de documentação nos hovers, signature help e autocomplete** — o
+  comentário imediatamente acima de uma declaração passa a ser interpretado, não
+  apenas repassado como texto cru. Duas convenções são reconhecidas, detectadas
+  pelo próprio conteúdo:
+  - **Javadoc** (`@param`, `@return`, `@remarks`/`@note`) — o primeiro parágrafo
+    vira o resumo, e linhas seguintes a uma tag continuam o texto dela
+  - **XMLdoc** (`<summary>`, `<param name="">`, `<returns>`, `<remarks>`) — a
+    convenção herdada do C# que o `omp-stdlib` usa. O HTML inline vira Markdown
+    (`<b>` → negrito, `<c>` → código, `<br />` → quebra de linha); `<library>`,
+    `<seealso>` e as âncoras `<a href="#Func">` são metadados do gerador da wiki
+    do open.mp e não aparecem no hover, onde só ocupariam espaço
+
+  Em ambos, cada parâmetro é casado **pelo nome** (o sufixo `[]` é ignorado) e
+  não pela posição — um comentário pode omitir parâmetros ou listá-los fora de
+  ordem. O **signature help** passa a mostrar a descrição do parâmetro sob o
+  cursor; o **autocomplete** mostra só o resumo, e o **hover**, o bloco inteiro
+  formatado, com as seções traduzidas para o idioma resolvido. Um comentário sem
+  marcação continua virando a descrição, como antes
+- **Tags de documentação no autocomplete** — o trigger `@`, dentro de um
+  comentário, passa a oferecer `@param`, `@return` e `@remarks` com snippets
 - **Diagnósticos e hovers traduzidos para Espanhol, Romeno e Russo** — as tabelas
   de mensagens `messages/langs/{es,ro,ru}.rs` existiam como esqueleto (texto ainda
   em inglês, copiado de `en.rs`) e agora estão de fato traduzidas: as 75 mensagens
@@ -23,6 +43,53 @@ caso encontre por favor relate para ajudar a manter a consistência dos dados.
   de palavras-chave) saem no idioma resolvido por `Locale::from_str`. Marcadores
   `{}` / `{n}` / `{style}` preservados; termos técnicos do Pawn (`native`,
   `forward`, `stock`, `public`, `static`, `enum`) mantidos em inglês
+
+### Alterado
+- **`#pragma deprecated` substitui o marcador `@DEPRECATED`** — a depreciação
+  passa a usar a diretiva do próprio compilador Pawn, em vez do marcador em
+  comentário que a engine reconhecia antes. A semântica acompanha a do
+  compilador: a diretiva marca o **próximo símbolo declarado** e não tem forma
+  inline. O texto que a segue é opcional e, quando presente, é **anexado ao
+  aviso** PP0007 — é a parte acionável, já que normalmente diz o que usar no
+  lugar:
+
+  ```pawn
+  #pragma deprecated Use BanPlayerFor em vez desta
+  stock BanTemporario(playerid, seconds) { }
+  ```
+
+  Cobertura inalterada: `native`, `stock`, `public`, `forward`, `static`,
+  `#define`, variáveis globais e `#include` (PP0008), incluindo o pareamento
+  automático entre `forward` e `public`
+- **`@DEPRECATED` deixa de ser reconhecido** — comentários com o marcador antigo
+  não marcam mais nada. Quem o usava precisa trocar por `#pragma deprecated`
+  (ver acima). O completion do `@` que existia só para inseri-lo deu lugar às
+  tags de documentação
+- **Dependências (Rust)** — `tokio` 1.52.3 → 1.53.1, `regex` 1.12.4 → 1.13.1,
+  `serde` 1.0.228 → 1.0.229, `serde_json` 1.0.150 → 1.0.151 e `futures` 0.3.32 →
+  0.3.34, além das transitivas do `Cargo.lock`
+- **CI — GitHub Actions atualizadas** (pinadas por SHA): `github/codeql-action`
+  4.36.2 → 4.37.9, `actions/checkout` 4.2.2 → 7.0.1, `actions/upload-artifact`
+  6.0.0 → 7.0.1, `actions/download-artifact` 7.0.0 → 8.0.1,
+  `actions/upload-pages-artifact` 3.0.1 → 5.0.0, `Swatinem/rust-cache` 2.9.1 →
+  2.9.2, `ossf/scorecard-action` 2.4.3 → 2.4.4 e `softprops/action-gh-release`
+  3.0.1 → 3.0.3
+- **Docs (CI)** — `mkdocs-material` para 9.7.7 e `pymdown-extensions` 10.21.3 →
+  11.0.2 (pinados por hash)
+- **Dependabot — um PR por ecossistema** — as atualizações passam a ser agrupadas
+  por ecossistema (cargo, GitHub Actions, pip) em vez de abrir um PR por
+  dependência, reduzindo o ruído de manutenção
+
+### Corrigido
+- **CodeQL: análise ausente em PRs de docs e dependências** — o repositório usava
+  o *default setup* do CodeQL, que só analisa um pull request quando ele toca
+  arquivos das linguagens configuradas. Um PR que mexia apenas em documentação ou
+  em manifestos de dependência não gerava análise alguma, enquanto `master`
+  continuava com uma por linguagem — a regra de proteção `code_scanning` não
+  conseguia comparar os dois lados e reportava *"configurations not found"*,
+  travando o merge. Substituído pelo *advanced setup* (`.github/workflows/codeql.yml`),
+  sem filtro de caminho: as duas configurações (`/language:actions` e
+  `/language:rust`) passam a existir em todo pull request
 
 ## [1.3.0] - 04/07/2026
 
