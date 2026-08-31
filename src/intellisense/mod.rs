@@ -1,5 +1,6 @@
 mod codelens;
 mod completion;
+mod docs;
 mod format_engine;
 mod format_indent;
 mod format_style;
@@ -13,6 +14,7 @@ mod signature;
 
 pub use codelens::get_code_lens;
 pub use completion::{get_at_completions, get_completions};
+pub use docs::{DocLabels, parse_doc};
 pub use format_style::{BracePlacement, FormatStyle, Preset};
 pub use formatter::{format_document, format_range};
 pub use hover::get_hover;

@@ -403,7 +403,7 @@ impl PawnProServer {
                 let before = &line[..col_bytes];
                 before.contains("//") || before.contains("/*") || line.trim_start().starts_with('*')
             });
-            intellisense::get_at_completions(in_comment, pos.line, at_col, state.locale)
+            intellisense::get_at_completions(in_comment, state.locale)
         })
         .await
         .unwrap_or_default()
