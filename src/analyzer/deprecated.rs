@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use regex::Regex;
 
 use crate::messages::{Locale, MsgKey, msg};
-use crate::parser::lexer::{has_inline_deprecated, strip_line_comments};
+use crate::parser::lexer::{pragma_deprecated_message, strip_line_comments};
 use crate::parser::types::IncludeDirective;
 use crate::parser::{ParsedFile, SymbolKind};
 use crate::util::to_u32;
@@ -23,11 +23,10 @@ struct DepEntry {
     kind: DepKind,
     /// Linha (0-based) da declaração no arquivo atual — `None` para símbolos de includes.
     decl_line: Option<u32>,
+    /// Texto do `#pragma deprecated`, anexado ao aviso quando presente.
+    message: Option<String>,
 }
 
-static RX_DEPRECATED: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
-    Regex::new(r"^\s*(?://\s*@DEPRECATED|/\*\s*@DEPRECATED\s*\*/)\s*$").unwrap()
-});
 static RX_INCLUDE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
     Regex::new(r#"^\s*#\s*include\s*(?:<([^>]+)>|"([^"]+)")"#).unwrap()
 });
@@ -43,8 +42,8 @@ static RX_DECL_PREFIX: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| 
     .unwrap()
 });
 
-/// Varre as linhas em busca de `#include` marcados como `@DEPRECATED` (na linha
-/// anterior ou inline), emite o diagnóstico PP0008 e devolve o conjunto de
+/// Varre as linhas em busca de `#include` precedidos de `#pragma deprecated`,
+/// emite o diagnóstico PP0008 e devolve o conjunto de
 /// arquivos resolvidos como descontinuados, para propagar a marcação aos símbolos.
 fn collect_deprecated_includes(
     lines: &[&str],
@@ -59,7 +58,7 @@ fn collect_deprecated_includes(
     for (line_idx, raw_line) in lines.iter().enumerate() {
         let raw_line = raw_line.trim_end_matches('\r');
 
-        if RX_DEPRECATED.is_match(raw_line) {
+        if pragma_deprecated_message(raw_line).is_some() {
             pending_deprecated = true;
             let s = strip_line_comments(raw_line, in_block);
             in_block = s.in_block;
@@ -73,10 +72,7 @@ fn collect_deprecated_includes(
             continue;
         }
 
-        let inline_deprecated = has_inline_deprecated(raw_line);
-        if (pending_deprecated || inline_deprecated)
-            && let Some(cap) = RX_INCLUDE.captures(line)
-        {
+        if pending_deprecated && let Some(cap) = RX_INCLUDE.captures(line) {
             let token = cap.get(1).or(cap.get(2)).map_or("", |m| m.as_str().trim());
             let is_angle = cap.get(1).is_some();
             let dir = IncludeDirective {
@@ -153,6 +149,7 @@ pub fn analyze_deprecated(
         dep_macros.entry(m.clone()).or_insert(DepEntry {
             kind: DepKind::Individual,
             decl_line: None,
+            message: None,
         });
     }
 
@@ -161,6 +158,7 @@ pub fn analyze_deprecated(
             dep_callables.entry(sym.name.clone()).or_insert(DepEntry {
                 kind: DepKind::Individual,
                 decl_line: Some(sym.line),
+                message: sym.deprecated_message.clone(),
             });
         }
     }
@@ -205,6 +203,7 @@ pub fn analyze_deprecated(
                 dep_macros.entry(m.clone()).or_insert(DepEntry {
                     kind,
                     decl_line: None,
+                    message: None,
                 });
             }
         }
@@ -215,6 +214,7 @@ pub fn analyze_deprecated(
             dep_callables.entry(sym.name.clone()).or_insert(DepEntry {
                 kind: DepKind::Individual,
                 decl_line: Some(sym.line),
+                message: sym.deprecated_message.clone(),
             });
         }
     }
@@ -232,7 +232,13 @@ pub fn analyze_deprecated(
             sym.col,
             col_end,
             codes::PP0007,
-            msg(locale, MsgKey::SymDeprecated).replace("{}", &sym.name),
+            match &sym.deprecated_message {
+                Some(m) if !m.is_empty() => format!(
+                    "{}: {m}",
+                    msg(locale, MsgKey::SymDeprecated).replace("{}", &sym.name)
+                ),
+                _ => msg(locale, MsgKey::SymDeprecated).replace("{}", &sym.name),
+            },
         ));
     }
 
@@ -292,7 +298,7 @@ fn emit_deprecated_usages(
                     col,
                     col + to_u32(name.len()),
                     codes::PP0007,
-                    dep_msg(name, &entry.kind, locale),
+                    dep_msg(name, entry, locale),
                 ));
             }
         }
@@ -311,7 +317,7 @@ fn emit_deprecated_usages(
                     col,
                     col + to_u32(name.len()),
                     codes::PP0007,
-                    dep_msg(name, &entry.kind, locale),
+                    dep_msg(name, entry, locale),
                 ));
             }
         }
@@ -326,7 +332,11 @@ fn classify_sym(
     kind: DepKind,
     decl_line: Option<u32>,
 ) {
-    let entry = DepEntry { kind, decl_line };
+    let entry = DepEntry {
+        kind,
+        decl_line,
+        message: sym.deprecated_message.clone(),
+    };
     match sym.kind {
         SymbolKind::Define => {
             macros.entry(sym.name.clone()).or_insert(entry);
@@ -340,9 +350,65 @@ fn classify_sym(
     }
 }
 
-fn dep_msg(name: &str, kind: &DepKind, locale: Locale) -> String {
-    match kind {
+fn dep_msg(name: &str, entry: &DepEntry, locale: Locale) -> String {
+    let base = match entry.kind {
         DepKind::Individual => msg(locale, MsgKey::SymDeprecatedUsage).replace("{}", name),
         DepKind::FromFile => msg(locale, MsgKey::SymFromDeprecatedFile).replace("{}", name),
+    };
+    // A mensagem da diretiva costuma dizer o que usar no lugar — é a parte
+    // acionável do aviso, então vai junto.
+    match &entry.message {
+        Some(m) if !m.is_empty() => format!("{base}: {m}"),
+        _ => base,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parser::parse_file;
+
+    fn analyze(src: &str) -> Vec<PawnDiagnostic> {
+        analyze_deprecated(
+            src,
+            Path::new("/tmp/test.pwn"),
+            &parse_file(src),
+            &[],
+            &ResolvedIncludes {
+                paths: Vec::new(),
+                files: HashMap::new(),
+                reverse_deps: HashMap::new(),
+            },
+            Locale::En,
+        )
+    }
+
+    #[test]
+    fn usage_of_deprecated_symbol_is_reported() {
+        let d = analyze("#pragma deprecated\nstock Old() {}\nmain() { Old(); }");
+        assert!(
+            d.iter().any(|x| x.code == codes::PP0007 && x.line == 2),
+            "{d:?}"
+        );
+    }
+
+    #[test]
+    fn pragma_message_is_appended_to_the_warning() {
+        let d = analyze("#pragma deprecated use New instead\nstock Old() {}\nmain() { Old(); }");
+        let usage = d
+            .iter()
+            .find(|x| x.code == codes::PP0007 && x.line == 2)
+            .expect("aviso de uso");
+        assert!(
+            usage.message.contains("use New instead"),
+            "{}",
+            usage.message
+        );
+    }
+
+    #[test]
+    fn symbol_without_pragma_is_not_reported() {
+        let d = analyze("stock Fine() {}\nmain() { Fine(); }");
+        assert!(!d.iter().any(|x| x.code == codes::PP0007), "{d:?}");
     }
 }

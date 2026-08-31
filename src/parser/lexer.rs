@@ -29,19 +29,26 @@ pub fn decode_bytes(bytes: &[u8]) -> String {
     }
 }
 
-pub fn has_inline_deprecated(raw_line: &str) -> bool {
-    if let Some(p) = raw_line.find("//")
-        && raw_line[p..].contains("@DEPRECATED")
-    {
-        return true;
+/// Reconhece `#pragma deprecated [mensagem]`, que marca o **próximo** símbolo
+/// declarado — a diretiva do compilador Pawn, que emite o warning 234 com a
+/// mensagem quando o símbolo é usado.
+///
+/// Devolve a mensagem (vazia quando a diretiva não traz uma).
+pub fn pragma_deprecated_message(raw_line: &str) -> Option<String> {
+    let t = raw_line.trim();
+    let rest = t.strip_prefix('#')?.trim_start();
+    let rest = rest.strip_prefix("pragma")?;
+    // Exige separador: `#pragmadeprecated` não é a diretiva.
+    if !rest.starts_with(|c: char| c.is_whitespace()) {
+        return None;
     }
-    if let Some(p) = raw_line.find("/*") {
-        let end = raw_line[p..].find("*/").map_or(raw_line.len(), |q| p + q);
-        if raw_line[p..end].contains("@DEPRECATED") {
-            return true;
-        }
+    let rest = rest.trim_start().strip_prefix("deprecated")?;
+    if !rest.is_empty() && !rest.starts_with(|c: char| c.is_whitespace()) {
+        return None;
     }
-    false
+    // Um comentário na mesma linha não faz parte da mensagem.
+    let msg = strip_line_comments(rest, false).text;
+    Some(msg.trim().to_string())
 }
 
 #[derive(Debug)]

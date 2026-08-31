@@ -1,14 +1,10 @@
 use regex::Regex;
 
 use super::{
-    lexer::{has_inline_deprecated, strip_line_comments, update_brace_depth},
-    types::{IncludeDirective, Param, ParsedFile, Symbol, SymbolKind},
+    lexer::{pragma_deprecated_message, strip_line_comments, update_brace_depth},
+    types::{Deprecation, IncludeDirective, Param, ParsedFile, Symbol, SymbolKind},
 };
 use crate::util::to_u32;
-
-static RX_DEPRECATED: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
-    Regex::new(r"^\s*(?://\s*@DEPRECATED|/\*\s*@DEPRECATED\s*\*/)\s*$").unwrap()
-});
 
 static RX_NATIVE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
     Regex::new(r"^\s*(?:forward\s+)?native\s+(?:[A-Za-z_]\w*::)*(?:[A-Za-z_]\w*:)?\s*([A-Za-z_]\w*)\s*\(([^)]*)\)").unwrap()
@@ -302,7 +298,7 @@ fn push_func(
     name: String,
     params_raw: &str,
     kind: SymbolKind,
-    deprecated: bool,
+    deprecated: &Deprecation,
 ) {
     let params = parse_params(params_raw);
     let col = to_u32(raw_line.find(name.as_str()).unwrap_or(0));
@@ -311,7 +307,8 @@ fn push_func(
         name,
         kind,
         params,
-        deprecated,
+        deprecated: deprecated.is_deprecated,
+        deprecated_message: deprecated.message.clone(),
         doc: extract_doc(raw_lines, line_idx),
         line: to_u32(line_idx),
         col,
@@ -321,11 +318,27 @@ fn push_func(
 /// Assinatura de função cuja `(...)` se estende por várias linhas, acumulada
 /// entre o `(` de abertura e o `)` de fechamento:
 /// `(line, col, name, params_acc, kind, deprecated, doc)`.
-type MultilineFunc = (u32, u32, String, String, SymbolKind, bool, Option<String>);
+type MultilineFunc = (
+    u32,
+    u32,
+    String,
+    String,
+    SymbolKind,
+    Deprecation,
+    Option<String>,
+);
 
 /// Função `plain` (sem keyword) cuja `{` ainda não apareceu — pode estar na
 /// linha seguinte: `(line, col, name, params, deprecated, doc, kind)`.
-type PendingPlain = (u32, u32, String, String, bool, Option<String>, SymbolKind);
+type PendingPlain = (
+    u32,
+    u32,
+    String,
+    String,
+    Deprecation,
+    Option<String>,
+    SymbolKind,
+);
 
 /// Concatena um trecho de parâmetros ao acumulador, inserindo `", "` como
 /// separador apenas quando necessário — evita vírgula dupla (`a,, b`) quando o
@@ -354,7 +367,7 @@ fn push_multi_var_names(
     raw_line: &str,
     trimmed: &str,
     line_idx: usize,
-    deprecated: bool,
+    deprecated: &Deprecation,
 ) {
     for name in extract_var_names(trimmed) {
         if RESERVED.contains(name.as_str()) {
@@ -366,7 +379,8 @@ fn push_multi_var_names(
             kind: SymbolKind::Variable,
             signature: None,
             params: vec![],
-            deprecated,
+            deprecated: deprecated.is_deprecated,
+            deprecated_message: deprecated.message.clone(),
             doc: None,
             line: to_u32(line_idx),
             col,
@@ -428,7 +442,8 @@ fn continue_multiline_func(
             name: pname,
             kind: pkind,
             params: parsed_params,
-            deprecated: pdep,
+            deprecated: pdep.is_deprecated,
+            deprecated_message: pdep.message.clone(),
             doc: pdoc,
             line: pidx,
             col: pcol,
@@ -453,7 +468,7 @@ struct ParserState {
     result: ParsedFile,
     in_block: bool,
     depth: i32,
-    pending_deprecated: bool,
+    pending_deprecated: Deprecation,
     /// Função cuja `{` ainda não apareceu (pode estar na linha seguinte).
     pending_plain: Option<PendingPlain>,
     /// Parâmetros acumulados de assinatura multi-linha entre `(` ... `)`.
@@ -482,9 +497,10 @@ impl ParserState {
     /// adequada. Cada handler devolve `true` quando consumiu a linha (equivalente
     /// ao antigo `continue`); ao final, a profundidade de chaves é atualizada.
     fn process_line(&mut self, raw_line: &str, line_idx: usize, raw_lines: &[&str]) {
-        // @DEPRECATED deve ser verificado no rawLine, antes do strip
-        if RX_DEPRECATED.is_match(raw_line) {
-            self.pending_deprecated = true;
+        // `#pragma deprecated` marca o próximo símbolo declarado; a mensagem
+        // que a segue é repassada no aviso de uso.
+        if let Some(m) = pragma_deprecated_message(raw_line) {
+            self.pending_deprecated = Deprecation::marked((!m.is_empty()).then_some(m));
             let stripped = strip_line_comments(raw_line, self.in_block);
             self.in_block = stripped.in_block;
             self.depth = update_brace_depth(&stripped.text, self.depth);
@@ -566,7 +582,7 @@ impl ParserState {
                 raw_line,
                 trimmed,
                 line_idx,
-                self.pending_deprecated,
+                &self.pending_deprecated,
             );
             if trimmed.contains(';') || trimmed.contains('{') {
                 self.in_multi_var_decl = false;
@@ -588,7 +604,8 @@ impl ParserState {
                 name: pname,
                 kind: pkind,
                 params,
-                deprecated: pdep,
+                deprecated: pdep.is_deprecated,
+                deprecated_message: pdep.message.clone(),
                 doc: pdoc,
                 line: pidx,
                 col: pcol,
@@ -596,9 +613,7 @@ impl ParserState {
             return;
         }
 
-        let inline_deprecated = has_inline_deprecated(raw_line);
-        let deprecated = self.pending_deprecated || inline_deprecated;
-        self.pending_deprecated = false;
+        let deprecated = std::mem::take(&mut self.pending_deprecated);
 
         if let Some(cap) = RX_INCLUDE.captures(line) {
             let is_try = cap.get(1).is_some();
@@ -627,7 +642,8 @@ impl ParserState {
                     kind: SymbolKind::Enum,
                     signature: None,
                     params: vec![],
-                    deprecated,
+                    deprecated: deprecated.is_deprecated,
+                    deprecated_message: deprecated.message.clone(),
                     doc: extract_doc(raw_lines, line_idx),
                     line: to_u32(line_idx),
                     col,
@@ -651,6 +667,7 @@ impl ParserState {
                                 signature: None,
                                 params: vec![],
                                 deprecated: false,
+                                deprecated_message: None,
                                 doc: None,
                                 line: to_u32(line_idx),
                                 col,
@@ -678,7 +695,7 @@ impl ParserState {
             };
 
             self.result.macro_names.push(name.clone());
-            if deprecated {
+            if deprecated.is_deprecated {
                 self.result.deprecated_macros.push(name.clone());
             }
             if is_func_macro {
@@ -691,7 +708,8 @@ impl ParserState {
                     kind: SymbolKind::Define,
                     signature: None,
                     params: vec![],
-                    deprecated,
+                    deprecated: deprecated.is_deprecated,
+                    deprecated_message: deprecated.message.clone(),
                     doc: extract_doc(raw_lines, line_idx),
                     line: to_u32(line_idx),
                     col,
@@ -709,7 +727,7 @@ impl ParserState {
             return;
         }
 
-        if self.try_function_decl(line, raw_line, line_idx, raw_lines, deprecated) {
+        if self.try_function_decl(line, raw_line, line_idx, raw_lines, &deprecated) {
             return;
         }
 
@@ -728,7 +746,8 @@ impl ParserState {
                         kind: kind.clone(),
                         signature: None,
                         params: vec![],
-                        deprecated,
+                        deprecated: deprecated.is_deprecated,
+                        deprecated_message: deprecated.message.clone(),
                         doc: None,
                         line: to_u32(line_idx),
                         col,
@@ -746,7 +765,8 @@ impl ParserState {
                     kind: SymbolKind::Variable,
                     signature: None,
                     params: vec![],
-                    deprecated,
+                    deprecated: deprecated.is_deprecated,
+                    deprecated_message: deprecated.message.clone(),
                     doc: None,
                     line: to_u32(line_idx),
                     col,
@@ -758,7 +778,7 @@ impl ParserState {
     /// Detecção dentro de um corpo aninhado (`depth > 0`): basicamente membros
     /// de `enum` quando ele se estende por várias linhas.
     fn process_nested(&mut self, trimmed: &str, raw_line: &str, line_idx: usize) {
-        self.pending_deprecated = false;
+        self.pending_deprecated = Deprecation::NONE;
         self.in_multi_var_decl = false;
 
         if self.in_enum
@@ -776,6 +796,7 @@ impl ParserState {
                     signature: None,
                     params: vec![],
                     deprecated: false,
+                    deprecated_message: None,
                     doc: None,
                     line: to_u32(line_idx),
                     col,
@@ -797,7 +818,7 @@ impl ParserState {
         raw_line: &str,
         line_idx: usize,
         raw_lines: &[&str],
-        deprecated: bool,
+        deprecated: &Deprecation,
     ) -> bool {
         if let Some(cap) = RX_NATIVE.captures(line) {
             let params_raw = cap.get(2).map_or("", |m| m.as_str());
@@ -872,7 +893,8 @@ impl ParserState {
                 kind: SymbolKind::StaticConst,
                 signature: None,
                 params: vec![],
-                deprecated,
+                deprecated: deprecated.is_deprecated,
+                deprecated_message: deprecated.message.clone(),
                 doc: extract_doc(raw_lines, line_idx),
                 line: to_u32(line_idx),
                 col,
@@ -888,7 +910,8 @@ impl ParserState {
                 kind: SymbolKind::StaticConst,
                 signature: None,
                 params: vec![],
-                deprecated,
+                deprecated: deprecated.is_deprecated,
+                deprecated_message: deprecated.message.clone(),
                 doc: extract_doc(raw_lines, line_idx),
                 line: to_u32(line_idx),
                 col,
@@ -937,7 +960,8 @@ impl ParserState {
                 kind: SymbolKind::Stock,
                 signature,
                 params,
-                deprecated,
+                deprecated: deprecated.is_deprecated,
+                deprecated_message: deprecated.message.clone(),
                 doc: extract_doc(raw_lines, line_idx),
                 line: to_u32(line_idx),
                 col,
@@ -972,7 +996,7 @@ impl ParserState {
                         col,
                         name,
                         params_raw.to_string(),
-                        deprecated,
+                        deprecated.clone(),
                         extract_doc(raw_lines, line_idx),
                         kind,
                     ));
@@ -1022,7 +1046,7 @@ impl ParserState {
                     effective_name,
                     partial.to_string(),
                     kind,
-                    deprecated,
+                    deprecated.clone(),
                     extract_doc(raw_lines, line_idx),
                 ));
                 return true;
@@ -1084,13 +1108,52 @@ mod tests {
 
     #[test]
     fn parses_deprecated() {
-        let src = "// @DEPRECATED\nstock OldFunc() {}";
+        let src = "#pragma deprecated\nstock OldFunc() {}";
         let f = parse_file(src);
-        assert!(
-            f.symbols
-                .iter()
-                .any(|s| s.name == "OldFunc" && s.deprecated)
+        let sym = f.symbols.iter().find(|s| s.name == "OldFunc").unwrap();
+        assert!(sym.deprecated);
+        assert_eq!(sym.deprecated_message, None);
+    }
+
+    #[test]
+    fn parses_deprecated_with_message() {
+        let src = "#pragma deprecated Use NewFunc instead\nstock OldFunc() {}";
+        let f = parse_file(src);
+        let sym = f.symbols.iter().find(|s| s.name == "OldFunc").unwrap();
+        assert!(sym.deprecated);
+        assert_eq!(
+            sym.deprecated_message.as_deref(),
+            Some("Use NewFunc instead")
         );
+    }
+
+    #[test]
+    fn deprecated_marks_only_the_next_symbol() {
+        let src = "#pragma deprecated old\nstock A() {}\nstock B() {}";
+        let f = parse_file(src);
+        assert!(f.symbols.iter().find(|s| s.name == "A").unwrap().deprecated);
+        assert!(!f.symbols.iter().find(|s| s.name == "B").unwrap().deprecated);
+    }
+
+    #[test]
+    fn deprecated_survives_multiline_signature() {
+        let src =
+            "#pragma deprecated banido\nstock BanEx(\n    playerid,\n    const reason[]\n)\n{\n}";
+        let f = parse_file(src);
+        let sym = f.symbols.iter().find(|s| s.name == "BanEx").unwrap();
+        assert!(sym.deprecated);
+        assert_eq!(sym.deprecated_message.as_deref(), Some("banido"));
+    }
+
+    #[test]
+    fn deprecated_ignores_other_pragmas_and_comment_marker() {
+        // `@DEPRECATED` em comentário não é mais reconhecido: a diretiva do
+        // compilador é a única fonte.
+        let f = parse_file("// @DEPRECATED\nstock A() {}");
+        assert!(!f.symbols.iter().find(|s| s.name == "A").unwrap().deprecated);
+
+        let f = parse_file("#pragma tabsize 4\nstock B() {}");
+        assert!(!f.symbols.iter().find(|s| s.name == "B").unwrap().deprecated);
     }
 
     #[test]
