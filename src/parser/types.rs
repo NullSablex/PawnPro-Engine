@@ -26,6 +26,28 @@ pub struct Param {
     pub is_variadic: bool,   // "..."
 }
 
+/// Marcação de `#pragma deprecated`: se o símbolo está descontinuado e, quando
+/// a diretiva trouxe uma, a mensagem que acompanha o aviso de uso.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Deprecation {
+    pub is_deprecated: bool,
+    pub message: Option<String>,
+}
+
+impl Deprecation {
+    pub const NONE: Self = Self {
+        is_deprecated: false,
+        message: None,
+    };
+
+    pub fn marked(message: Option<String>) -> Self {
+        Self {
+            is_deprecated: true,
+            message,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Symbol {
     pub name: String,
@@ -33,6 +55,9 @@ pub struct Symbol {
     pub signature: Option<String>,
     pub params: Vec<Param>,
     pub deprecated: bool,
+    /// Texto após `#pragma deprecated`, repassado no aviso de uso. `None`
+    /// quando a diretiva não trouxe mensagem.
+    pub deprecated_message: Option<String>,
     pub doc: Option<String>,
     pub line: u32,
     pub col: u32,

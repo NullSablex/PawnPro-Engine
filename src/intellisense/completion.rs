@@ -2,8 +2,8 @@ use std::collections::HashSet;
 
 use regex::Regex;
 use tower_lsp::lsp_types::{
-    CompletionItem, CompletionItemKind, CompletionItemTag, CompletionTextEdit, Documentation,
-    InsertTextFormat, MarkupContent, MarkupKind, Position, Range, TextEdit,
+    CompletionItem, CompletionItemKind, CompletionItemTag, Documentation, InsertTextFormat,
+    MarkupContent, MarkupKind, Position,
 };
 
 use crate::messages::{Locale, MsgKey, msg};
@@ -430,46 +430,33 @@ fn extract_param_name(part: &str) -> String {
     }
 }
 
-pub fn get_at_completions(
-    in_comment: bool,
-    line: u32,
-    at_col: u32,
-    locale: Locale,
-) -> Vec<CompletionItem> {
-    let detail = Some(msg(locale, MsgKey::KwAtDeprecated).to_string());
-    if in_comment {
-        vec![CompletionItem {
-            label: "@DEPRECATED".to_string(),
-            kind: Some(CompletionItemKind::KEYWORD),
-            detail,
-            insert_text: Some("DEPRECATED".to_string()),
-            insert_text_format: Some(InsertTextFormat::PLAIN_TEXT),
-            sort_text: Some("0_DEPRECATED".to_string()),
-            ..Default::default()
-        }]
-    } else {
-        let range = Range {
-            start: Position {
-                line,
-                character: at_col,
-            },
-            end: Position {
-                line,
-                character: at_col + 1,
-            },
-        };
-        vec![CompletionItem {
-            label: "@DEPRECATED".to_string(),
-            kind: Some(CompletionItemKind::KEYWORD),
-            detail,
-            text_edit: Some(CompletionTextEdit::Edit(TextEdit {
-                range,
-                new_text: "// @DEPRECATED".to_string(),
-            })),
-            sort_text: Some("0_DEPRECATED".to_string()),
-            ..Default::default()
-        }]
+/// Completions do trigger `@`: as tags de documentação Javadoc, úteis apenas
+/// dentro de um comentário. Fora dele, `@` não inicia nada em Pawn.
+pub fn get_at_completions(in_comment: bool, locale: Locale) -> Vec<CompletionItem> {
+    if !in_comment {
+        return Vec::new();
     }
+    [
+        (
+            "param",
+            MsgKey::DocTagParam,
+            "param ${1:nome}  ${2:descrição}",
+        ),
+        ("return", MsgKey::DocTagReturn, "return ${1:descrição}"),
+        ("remarks", MsgKey::DocTagRemarks, "remarks ${1:nota}"),
+    ]
+    .into_iter()
+    .map(|(label, detail_key, insert)| CompletionItem {
+        label: format!("@{label}"),
+        kind: Some(CompletionItemKind::KEYWORD),
+        detail: Some(msg(locale, detail_key).to_string()),
+        // O `@` já foi digitado e disparou o trigger.
+        insert_text: Some(insert.to_string()),
+        insert_text_format: Some(InsertTextFormat::SNIPPET),
+        sort_text: Some(format!("0_{label}")),
+        ..Default::default()
+    })
+    .collect()
 }
 
 // `locale` (i18n) e `locals` (variáveis locais) são termos corretos do domínio;
@@ -578,12 +565,19 @@ fn build_symbol_item(sym: &crate::parser::types::Symbol) -> CompletionItem {
         label: sym.name.clone(),
         kind,
         detail: sym.signature.clone(),
-        documentation: sym.doc.as_ref().map(|d| {
-            Documentation::MarkupContent(MarkupContent {
-                kind: MarkupKind::Markdown,
-                value: d.clone(),
-            })
-        }),
+        // Na lista de autocomplete cabe o resumo, não o bloco inteiro; o hover
+        // mostra a doc completa.
+        documentation: sym
+            .doc
+            .as_deref()
+            .map(super::parse_doc)
+            .and_then(|d| d.short())
+            .map(|v| {
+                Documentation::MarkupContent(MarkupContent {
+                    kind: MarkupKind::Markdown,
+                    value: v,
+                })
+            }),
         insert_text,
         insert_text_format,
         sort_text: Some(format!("0_{}", sym.name)),

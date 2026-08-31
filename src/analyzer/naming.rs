@@ -104,6 +104,7 @@ mod tests {
             signature: None,
             params,
             deprecated: false,
+            deprecated_message: None,
             doc: None,
             line: 0,
             col: 0,

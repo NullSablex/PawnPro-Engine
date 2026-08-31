@@ -5,7 +5,8 @@ use tower_lsp::lsp_types::{
 
 use crate::workspace::WorkspaceState;
 
-use super::collect_all_symbols;
+use super::hover::doc_labels;
+use super::{collect_all_symbols, parse_doc};
 use crate::util::to_u32;
 
 pub fn get_signature_help(
@@ -37,6 +38,9 @@ pub fn get_signature_help(
         .iter()
         .find(|s| s.name == func_name && s.signature.is_some())?;
 
+    let doc = sym.doc.as_deref().map(parse_doc);
+    let labels = doc_labels(state.locale);
+
     let param_infos: Vec<ParameterInformation> = sym
         .params
         .iter()
@@ -46,9 +50,21 @@ pub fn get_signature_help(
             } else {
                 p.name.clone()
             };
+            // A doc do parâmetro casa pelo nome, não pela posição: um
+            // comentário pode omitir parâmetros ou listá-los fora de ordem.
+            let documentation = doc
+                .as_ref()
+                .and_then(|d| d.param(&p.name))
+                .filter(|t| !t.is_empty())
+                .map(|t| {
+                    Documentation::MarkupContent(MarkupContent {
+                        kind: MarkupKind::Markdown,
+                        value: t.to_string(),
+                    })
+                });
             ParameterInformation {
                 label: ParameterLabel::Simple(label),
-                documentation: None,
+                documentation,
             }
         })
         .collect();
@@ -58,10 +74,10 @@ pub fn get_signature_help(
     Some(SignatureHelp {
         signatures: vec![SignatureInformation {
             label: sym.signature.clone().unwrap_or_default(),
-            documentation: sym.doc.as_ref().map(|d| {
+            documentation: doc.as_ref().and_then(|d| d.to_markdown(&labels)).map(|v| {
                 Documentation::MarkupContent(MarkupContent {
                     kind: MarkupKind::Markdown,
-                    value: d.clone(),
+                    value: v,
                 })
             }),
             parameters: Some(param_infos),

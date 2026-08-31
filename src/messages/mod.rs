@@ -58,6 +58,9 @@ pub enum MsgKey {
     RefsOne,
     RefsMany,
     HoverDeprecated,
+    HoverParams,
+    HoverReturns,
+    HoverRemarks,
     KwIf,
     KwIfElse,
     KwElse,
@@ -101,7 +104,9 @@ pub enum MsgKey {
     KwAssert,
     KwError,
     KwWarning,
-    KwAtDeprecated,
+    DocTagParam,
+    DocTagReturn,
+    DocTagRemarks,
     KwLocal,
     NameTooShort,
     NamePlaceholder,
@@ -137,6 +142,9 @@ mod tests {
         // Toda variante deve devolver texto não vazio para uma chave qualquer.
         for loc in [Locale::PtBr, Locale::Es, Locale::Ru, Locale::Ro, Locale::En] {
             assert!(!msg(loc, MsgKey::HoverDeprecated).is_empty());
+            assert!(!msg(loc, MsgKey::HoverParams).is_empty());
+            assert!(!msg(loc, MsgKey::HoverReturns).is_empty());
+            assert!(!msg(loc, MsgKey::HoverRemarks).is_empty());
         }
     }
 }

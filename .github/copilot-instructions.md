@@ -51,7 +51,7 @@ Não duplicar em outros módulos:
 - `decode_bytes` — UTF-8 com fallback latin-1
 - `strip_line_comments` — remove `//` e `/* */`, rastreia estado de bloco
 - `update_brace_depth` — rastreia `{}` ignorando literais string/char
-- `has_inline_deprecated` — detecta `@DEPRECATED` inline
+- `pragma_deprecated_message` — detecta `#pragma deprecated` e devolve sua mensagem
 
 ## Diagnósticos
 

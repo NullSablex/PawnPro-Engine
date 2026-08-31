@@ -12,8 +12,8 @@ O motor emite diagnósticos identificados por códigos `PP####`.
 | `PP0004` | Aviso | `public`/`stock`/`static` sem corpo `{}` |
 | `PP0005` | Aviso¹ | Variável global declarada e não utilizada |
 | `PP0006` | Aviso¹ | Função `stock`/`static` não utilizada |
-| `PP0007` | Aviso | Uso de símbolo ou include marcado com `@DEPRECATED` |
-| `PP0008` | Aviso | `#include` precedido de comentário `@DEPRECATED` |
+| `PP0007` | Aviso | Uso de símbolo marcado com `#pragma deprecated` |
+| `PP0008` | Aviso | `#include` precedido de `#pragma deprecated` |
 | `PP0009` | Hint¹ | Parâmetro de função declarado e não utilizado |
 | `PP0010` | Aviso | Função chamada não declarada em nenhum include ativo |
 | `PP0011` | Hint¹ | `#define` declarado mas não utilizado |
@@ -23,6 +23,7 @@ O motor emite diagnósticos identificados por códigos `PP####`.
 | `PP0015` | Hint | `forward` declarado mas nunca chamado |
 | `PP0016` | Aviso¹ | Função sem keyword declarada mas nunca chamada |
 | `PP0017` | Aviso | Indentação inconsistente dentro de um bloco |
+| `PP0018` | Hint | Nome de identificador pobre (assistente de nomes; desligado por padrão) |
 
 > ¹ Marcados com `DiagnosticTag::UNNECESSARY` — o editor exibe o símbolo desbotado além do sublinhado diagnóstico.
 
@@ -45,7 +46,14 @@ Emitido quando um `#include <token>` ou `#include "caminho"` não é resolvido e
 - O motor verifica o workspace inteiro — um símbolo usado em qualquer arquivo `.pwn`/`.inc` do projeto não dispara o aviso.
 
 ### PP0007 / PP0008 — Depreciação
-Aplique `// @DEPRECATED` (ou `/* @DEPRECATED */`) na linha anterior à declaração ou inline.
+Use a diretiva do compilador, `#pragma deprecated`, na linha anterior à declaração — ela marca o **próximo** símbolo declarado:
+
+```pawn
+#pragma deprecated Use BanPlayerFor em vez desta
+stock BanTemporario(playerid, seconds) { }
+```
+
+O texto após a diretiva é opcional e, quando presente, é anexado ao aviso — normalmente diz o que usar no lugar.
 
 - **PP0007** é emitido na própria declaração depreciada (hint visual com strikethrough) e em cada uso posterior.
 - Cobre: `native`, `stock`, `public`, `forward`, `static`, `#define` e variáveis globais.

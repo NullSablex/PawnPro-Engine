@@ -83,6 +83,14 @@ fn hover_include(
     })
 }
 
+pub(super) fn doc_labels(locale: crate::messages::Locale) -> super::DocLabels {
+    super::DocLabels {
+        params: msg(locale, MsgKey::HoverParams).to_string(),
+        returns: msg(locale, MsgKey::HoverReturns).to_string(),
+        remarks: msg(locale, MsgKey::HoverRemarks).to_string(),
+    }
+}
+
 fn format_symbol(sym: &Symbol, locale: crate::messages::Locale) -> Hover {
     let kw = match sym.kind {
         SymbolKind::Native => "native",
@@ -113,21 +121,13 @@ fn format_symbol(sym: &Symbol, locale: crate::messages::Locale) -> Hover {
         let _ = write!(md, "\n\n> {}", msg(locale, MsgKey::HoverDeprecated));
     }
 
-    if let Some(doc) = &sym.doc {
-        let clean: Vec<&str> = doc
-            .lines()
-            .map(|l| {
-                l.trim()
-                    .trim_start_matches("//")
-                    .trim_start_matches('*')
-                    .trim_start_matches('/')
-                    .trim()
-            })
-            .filter(|l| !l.is_empty() && !l.starts_with("/*") && !l.starts_with("*/"))
-            .collect();
-        if !clean.is_empty() {
-            let _ = write!(md, "\n\n---\n{}", clean.join("\n"));
-        }
+    if let Some(rendered) = sym
+        .doc
+        .as_deref()
+        .map(super::parse_doc)
+        .and_then(|d| d.to_markdown(&doc_labels(locale)))
+    {
+        let _ = write!(md, "\n\n---\n{rendered}");
     }
 
     Hover {
