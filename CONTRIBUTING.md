@@ -57,7 +57,7 @@ docs/           ← documentação detalhada (não incluída nos releases)
 - **Nunca interpolar input não escapado em `Regex::new`**.
 - **`cargo clippy -- -D warnings` deve passar sem erros** — obrigatório.
 - **Novos diagnósticos sempre com constante em `analyzer/codes.rs`**.
-- **Funções utilitárias de texto em `parser/lexer.rs`** — não duplicar `decode_bytes`, `strip_line_comments`, `update_brace_depth` ou `has_inline_deprecated` em outros módulos.
+- **Funções utilitárias de texto em `parser/lexer.rs`** — não duplicar `decode_bytes`, `strip_line_comments`, `update_brace_depth` ou `pragma_deprecated_message` em outros módulos.
 
 ## Adicionando um novo diagnóstico
 

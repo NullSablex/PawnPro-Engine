@@ -30,7 +30,7 @@ src/
   config.rs            ← EngineConfig recebida via initializationOptions
   parser/
     lexer.rs           ← decode_bytes, strip_line_comments, update_brace_depth,
-                          has_inline_deprecated — utilitários de texto
+                          pragma_deprecated_message — utilitários de texto
     symbols.rs         ← parser principal: extrai Symbol, IncludeDirective, macros
     types.rs           ← ParsedFile, Symbol, SymbolKind, IncludeDirective, Param
     mod.rs             ← re-exports públicos
@@ -41,7 +41,7 @@ src/
     semantic.rs        ← PP0002, PP0003, PP0004 — erros estruturais
     unused.rs          ← PP0005, PP0006, PP0011, PP0012 — código morto
     hints.rs           ← PP0009 — parâmetros não utilizados
-    deprecated.rs      ← PP0007, PP0008 — @DEPRECATED
+    deprecated.rs      ← PP0007, PP0008 — #pragma deprecated
     undefined.rs       ← PP0010 — funções não declaradas
     mod.rs             ← re-exports + função analyze() que orquestra tudo
   intellisense/
@@ -81,7 +81,7 @@ Armazenado como `Arc<ParsedFile>` no cache. Contém:
 - `symbols: Vec<Symbol>` — todas as declarações
 - `includes: Vec<IncludeDirective>` — todas as diretivas `#include` / `#tryinclude`
 - `macro_names: Vec<String>` — nomes de `#define`
-- `deprecated_macros: Vec<String>` — macros marcadas com `@DEPRECATED`
+- `deprecated_macros: Vec<String>` — macros marcadas com `#pragma deprecated`
 - `func_macro_prefixes: Vec<String>` — prefixos como `CMD`, `BPR`
 - `namespace_aliases: HashMap<String, String>`
 
@@ -101,7 +101,8 @@ pub struct ResolvedIncludes {
   - `StaticConst` — constante: membro de enum, `stock const`, `static const`
   - `Enum` — nome do enum declarado (`enum NomeDoEnum { ... }`)
   - `Const` — constante declarada com `const`
-- `deprecated: bool` — marcado com `@DEPRECATED`
+- `deprecated: bool` — marcado com `#pragma deprecated`
+- `deprecated_message: Option<String>` — texto da diretiva, anexado ao aviso
 - `doc: Option<String>` — comentário de documentação acima da declaração
 - `line: u32`, `col: u32` — posição 0-based em bytes UTF-8
 
@@ -171,7 +172,7 @@ Funções utilitárias canônicas — **não duplicar em outros módulos**:
 | `decode_bytes(bytes)` | UTF-8 com fallback latin-1 |
 | `strip_line_comments(line, in_block)` | Remove `//` e `/* */`, rastreia estado de bloco |
 | `update_brace_depth(ch, depth, in_str, in_char)` | Rastreia profundidade de `{}` ignorando literais |
-| `has_inline_deprecated(line)` | Detecta `@DEPRECATED` inline na mesma linha |
+| `pragma_deprecated_message(line)` | Detecta `#pragma deprecated` e devolve sua mensagem |
 
 ---
 

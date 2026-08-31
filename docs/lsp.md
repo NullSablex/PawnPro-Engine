@@ -63,9 +63,42 @@ O motor registra três caracteres de disparo:
 |---------|--------------|
 | `.` | Completions de namespace (aliases definidos via `#define NAMESPACE:: PREFIX_`) |
 | `#` | Completions de diretivas (`#include`, `#define`, `#if`, `#ifdef`, etc.) com snippets |
-| `@` | Completion de `@DEPRECATED` — em comentários insere a tag; fora de comentários insere `// @DEPRECATED` |
+| `@` | Tags de documentação (`@param`, `@return`, `@remarks`) — apenas dentro de comentários |
 
-Completions normais (sem trigger) listam símbolos de todos os includes transitivos com snippets de parâmetros. Itens marcados com `@DEPRECATED` aparecem com tag de depreciação.
+Completions normais (sem trigger) listam símbolos de todos os includes transitivos com snippets de parâmetros. Itens marcados com `#pragma deprecated` aparecem com tag de depreciação.
+
+## Comentários de documentação
+
+O comentário imediatamente acima de uma declaração alimenta o hover, o signature help e o autocomplete. Duas convenções são reconhecidas, detectadas pelo próprio conteúdo:
+
+**Javadoc** — `@param`, `@return`, `@remarks`/`@note`. O primeiro parágrafo é o resumo; linhas seguintes a uma tag continuam seu texto.
+
+```pawn
+/**
+ * Ban a connected player's address permanently, with a reason.
+ *
+ * @param playerid  the player to ban
+ * @param reason[]  why, shown to them and kept in the record
+ * @return          1 always
+ */
+native BanEx(playerid, const reason[]);
+```
+
+**XMLdoc** — a convenção do C# que o `omp-stdlib` usa: `<summary>`, `<param name="...">`, `<returns>`, `<remarks>`. O HTML inline vira Markdown (`<b>` → negrito, `<c>` → código, `<br />` → quebra); `<library>`, `<seealso>` e as âncoras `<a href="#Func">` são metadados do gerador da wiki e não aparecem no hover.
+
+```pawn
+/**
+ * <library>omp_actor</library>
+ * <summary>Checks if an actor is streamed in for a player.</summary>
+ * <param name="actorid">The ID of the actor</param>
+ * <returns><b><c>1</c></b> if streamed in, <b><c>0</c></b> otherwise.</returns>
+ */
+native bool:IsActorStreamedIn(actorid, playerid);
+```
+
+Em ambos, cada parâmetro é casado **pelo nome** (o sufixo `[]` é ignorado), não pela posição — um comentário pode omitir parâmetros ou listá-los fora de ordem. O signature help mostra a descrição do parâmetro sob o cursor; o autocomplete mostra só o resumo.
+
+Um comentário sem nenhuma marcação vira a descrição, como antes.
 
 ## Sincronização de documentos
 

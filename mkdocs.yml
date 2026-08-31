@@ -11,6 +11,10 @@ nav:
   - Introdução: index.md
   - Diagnósticos: diagnostics.md
   - Protocolo LSP: lsp.md
+  - Idiomas (i18n): i18n.md
+  - Assistente de nomes:
+      - Visão geral: naming-assistant.md
+      - Listas de nomes (.ban/.allow): naming-lists.md
 
 theme:
   name: material
