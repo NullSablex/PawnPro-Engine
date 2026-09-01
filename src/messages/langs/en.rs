@@ -15,12 +15,12 @@ pub fn get(key: MsgKey) -> &'static str {
         MsgKey::DeclNoBody => "{} declaration \"{}\" has no body. Use \"forward\" for prototypes.",
         MsgKey::VarUnused => "\"{}\" variable declared but never used",
         MsgKey::StockUnused => "\"{}\" stock function declared but never used",
-        MsgKey::SymDeprecated => "\"{}\" is marked as deprecated",
+        MsgKey::SymDeprecated => "\"{}\" is deprecated",
         MsgKey::SymDeprecatedUsage => "\"{}\" is deprecated",
-        MsgKey::PragmaUnknown => "`#pragma {}` is not recognized by the compiler",
-        MsgKey::PragmaUnknownDidYouMean => "`#pragma {}` is not recognized — did you mean `{sug}`?",
+        MsgKey::PragmaUnknown => "`#pragma {}` does not exist",
+        MsgKey::PragmaUnknownDidYouMean => "`#pragma {}` does not exist — use `{sug}`",
         MsgKey::PragmaDeprecatedQuoted => {
-            "`#pragma deprecated` takes the rest of the line as text — the quotes would end up in the message"
+            "The message takes no quotes — they would end up in the text"
         }
         MsgKey::SymFromDeprecatedFile => "\"{}\" belongs to a deprecated include",
         MsgKey::IncludeDeprecated => "\"{}\" is deprecated",

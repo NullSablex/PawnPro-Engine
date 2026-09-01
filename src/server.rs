@@ -747,7 +747,7 @@ fn naming_actions(
                 continue;
             };
             actions.push(CodeActionOrCommand::CodeAction(CodeAction {
-                title: format!("Renomear \"{name}\" para \"{suggestion}\""),
+                title: format!("Renomear para \"{suggestion}\""),
                 kind: Some(CodeActionKind::QUICKFIX),
                 diagnostics: Some(vec![diag.clone()]),
                 edit: Some(edit),
@@ -783,10 +783,8 @@ fn pragma_actions(
         };
         let Some(fix) = &issue.fix else { continue };
         let (title, new_text) = match fix {
-            PragmaFix::Rename(s) => (format!("Trocar para `#pragma {s}`"), s.clone()),
-            PragmaFix::Unquote(inner) => {
-                ("Remover as aspas da mensagem".to_string(), inner.clone())
-            }
+            PragmaFix::Rename(s) => (format!("Usar `#pragma {s}`"), s.clone()),
+            PragmaFix::Unquote(inner) => ("Remover as aspas".to_string(), inner.clone()),
         };
         let range = Range {
             start: Position {
@@ -963,7 +961,7 @@ fn indent_actions(
         };
         changes.insert(parsed, edits);
         actions.push(CodeActionOrCommand::CodeAction(CodeAction {
-            title: "Corrigir a indentação desta linha".to_string(),
+            title: "Corrigir a indentação".to_string(),
             kind: Some(CodeActionKind::QUICKFIX),
             diagnostics: Some(vec![diag.clone()]),
             edit: Some(WorkspaceEdit {
@@ -1050,7 +1048,7 @@ fn removal_title(code: &str) -> String {
         "PP0005" => "Remover variável não usada".to_string(),
         "PP0011" => "Remover #define não usado".to_string(),
         "PP0012" => "Remover #include não usado".to_string(),
-        "PP0002" | "PP0003" => "Remover o corpo da declaração".to_string(),
+        "PP0002" | "PP0003" => "Remover o corpo".to_string(),
         _ => "Remover declaração não usada".to_string(),
     }
 }

@@ -15,15 +15,11 @@ pub fn get(key: MsgKey) -> &'static str {
         MsgKey::DeclNoBody => "Declaração {} \"{}\" sem corpo. Use \"forward\" para protótipos.",
         MsgKey::VarUnused => "\"{}\" variável declarada mas não utilizada",
         MsgKey::StockUnused => "\"{}\" função stock declarada mas não utilizada",
-        MsgKey::SymDeprecated => "\"{}\" está marcado como depreciado",
+        MsgKey::SymDeprecated => "\"{}\" está depreciado",
         MsgKey::SymDeprecatedUsage => "\"{}\" está depreciado",
-        MsgKey::PragmaUnknown => "`#pragma {}` não é reconhecido pelo compilador",
-        MsgKey::PragmaUnknownDidYouMean => {
-            "`#pragma {}` não é reconhecido — você quis dizer `{sug}`?"
-        }
-        MsgKey::PragmaDeprecatedQuoted => {
-            "`#pragma deprecated` toma o resto da linha como texto — as aspas entrariam na mensagem"
-        }
+        MsgKey::PragmaUnknown => "`#pragma {}` não existe",
+        MsgKey::PragmaUnknownDidYouMean => "`#pragma {}` não existe — use `{sug}`",
+        MsgKey::PragmaDeprecatedQuoted => "A mensagem não leva aspas — elas entrariam no texto",
         MsgKey::SymFromDeprecatedFile => "\"{}\" pertence a um include depreciado",
         MsgKey::IncludeDeprecated => "\"{}\" está depreciado",
         MsgKey::ParamUnused => "Parâmetro \"{}\" declarado mas não utilizado",
