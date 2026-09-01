@@ -111,6 +111,18 @@ caso encontre por favor relate para ajudar a manter a consistência dos dados.
   de delimitá-la. Aspas no meio do texto continuam sendo texto legítimo
 
 ### Corrigido
+- **Doc comment de um símbolo aparecendo no hover de outro** — quando o
+  comentário era um bloco de uma linha só (`/** … */`), a varredura empurrava
+  essa linha e ia procurar o `/*` de abertura **a partir da linha anterior**,
+  atravessando o código acima até casar com o `/**` de outro comentário. O
+  hover de um `#define`, por exemplo, mostrava a documentação da função
+  anterior com o código do meio junto. Um `*/` sem abertura também deixa de
+  virar doc, em vez de arrastar o arquivo até o topo
+- **Aviso de depreciado desalinhando o hover** — era escrito como *blockquote*
+  (`>`), o que fazia o editor recuar o bloco e ler a linha `---` seguinte como
+  continuação dele, desalinhando a documentação inteira. Passa a ser texto
+  normal — e agora traz junto a mensagem do `#pragma deprecated`, que antes só
+  aparecia no aviso de uso
 - **`native`/`forward` com assinatura quebrada em várias linhas eram ignorados** —
   ao fechar o `)`, o parser só criava o símbolo se a linha trouxesse `{`; sem
   isso, ficava esperando um corpo que nunca chega, já que essas duas formas

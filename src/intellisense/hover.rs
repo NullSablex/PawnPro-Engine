@@ -118,7 +118,13 @@ fn format_symbol(sym: &Symbol, locale: crate::messages::Locale) -> Hover {
     };
 
     if sym.deprecated {
-        let _ = write!(md, "\n\n> {}", msg(locale, MsgKey::HoverDeprecated));
+        // Sem blockquote: o editor recua o bloco inteiro, e o `---` seguinte
+        // passa a ser lido como continuação dele.
+        let _ = write!(md, "\n\n{}", msg(locale, MsgKey::HoverDeprecated));
+        // A mensagem da diretiva costuma dizer o que usar no lugar.
+        if let Some(m) = sym.deprecated_message.as_deref().filter(|m| !m.is_empty()) {
+            let _ = write!(md, " — {m}");
+        }
     }
 
     if let Some(rendered) = sym
@@ -136,5 +142,69 @@ fn format_symbol(sym: &Symbol, locale: crate::messages::Locale) -> Hover {
             value: md,
         }),
         range: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::messages::Locale;
+    use crate::parser::types::SymbolKind;
+
+    fn sym(deprecated: bool, message: Option<&str>, doc: Option<&str>) -> Symbol {
+        Symbol {
+            name: "BanirComMotivo".into(),
+            kind: SymbolKind::Stock,
+            signature: Some("BanirComMotivo(playerid)".into()),
+            params: vec![],
+            deprecated,
+            deprecated_message: message.map(str::to_string),
+            doc: doc.map(str::to_string),
+            line: 0,
+            col: 0,
+        }
+    }
+
+    fn markdown(h: &Hover) -> String {
+        match &h.contents {
+            HoverContents::Markup(m) => m.value.clone(),
+            _ => panic!("esperado markup"),
+        }
+    }
+
+    #[test]
+    fn deprecation_is_not_a_blockquote() {
+        // `>` faz o editor recuar o bloco e engolir o `---` seguinte como
+        // continuação — foi o que deixava o hover torto.
+        let md = markdown(&format_symbol(&sym(true, None, None), Locale::PtBr));
+        assert!(!md.contains('>'), "{md}");
+        assert!(md.contains("Depreciado"), "{md}");
+    }
+
+    #[test]
+    fn deprecation_message_is_shown_in_the_hover() {
+        let md = markdown(&format_symbol(
+            &sym(true, Some("Use BanPlayerFor"), None),
+            Locale::PtBr,
+        ));
+        assert!(md.contains("Use BanPlayerFor"), "{md}");
+    }
+
+    #[test]
+    fn signature_comes_first_and_doc_after_the_rule() {
+        let md = markdown(&format_symbol(
+            &sym(false, None, Some("/**\n * Bane alguém.\n */")),
+            Locale::PtBr,
+        ));
+        assert!(md.starts_with("```pawn\nstock BanirComMotivo(playerid)\n```"));
+        assert!(md.contains("\n---\n"), "{md}");
+        assert!(md.contains("Bane alguém."), "{md}");
+    }
+
+    #[test]
+    fn a_symbol_without_doc_still_shows_its_signature() {
+        let md = markdown(&format_symbol(&sym(false, None, None), Locale::PtBr));
+        assert!(md.contains("BanirComMotivo(playerid)"));
+        assert!(!md.contains("---"), "sem doc não há regra: {md}");
     }
 }

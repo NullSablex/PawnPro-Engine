@@ -276,15 +276,26 @@ fn extract_doc(lines: &[&str], line_idx: usize) -> Option<String> {
             found = true;
         } else if l.ends_with("*/") {
             doc_lines.push(l);
-            // busca o início do bloco
-            let mut j = idx.checked_sub(1);
-            while let Some(jdx) = j {
-                let ll = lines[jdx].trim();
-                doc_lines.push(ll);
-                if ll.contains("/*") {
-                    break;
+            // Um bloco de uma linha só (`/** … */`) já está completo; procurar
+            // o início a partir da linha anterior atravessaria o código acima
+            // até casar com o `/*` de outro comentário.
+            if !l.starts_with("/*") {
+                let mut j = idx.checked_sub(1);
+                let mut open_found = false;
+                while let Some(jdx) = j {
+                    let ll = lines[jdx].trim();
+                    doc_lines.push(ll);
+                    if ll.contains("/*") {
+                        open_found = true;
+                        break;
+                    }
+                    j = jdx.checked_sub(1);
                 }
-                j = jdx.checked_sub(1);
+                // Sem `/*` que abra, o `*/` não pertence a um bloco de doc
+                // deste símbolo: descarta em vez de arrastar o arquivo inteiro.
+                if !open_found {
+                    return None;
+                }
             }
             break;
         } else {
@@ -1193,6 +1204,27 @@ mod tests {
             "{:?}",
             f.symbols.iter().map(|s| &s.name).collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn doc_de_bloco_de_uma_linha_nao_atravessa_o_codigo_acima() {
+        // Um `/** … */` de uma linha já está completo: procurar o `/*` de
+        // abertura acima faria a varredura engolir funções inteiras até casar
+        // com o `/**` de outro comentário.
+        let src = "/**\n * Doc da funcao.\n */\nstock Antiga() { return 1; }\n\n/** Limite antigo. */\n#define MAX_X (50)\n";
+        let f = parse_file(src);
+        let d = f.symbols.iter().find(|s| s.name == "MAX_X").unwrap();
+        assert_eq!(d.doc.as_deref(), Some("/** Limite antigo. */"));
+    }
+
+    #[test]
+    fn fim_de_bloco_sem_abertura_nao_vira_doc() {
+        // `*/` solto acima da declaração: sem `/*` que abra, não é doc deste
+        // símbolo — arrastar o arquivo até o topo seria pior que não ter doc.
+        let src = "stock Outra() { return 1; }\nalgo */\n#define MAX_Y (1)\n";
+        let f = parse_file(src);
+        let d = f.symbols.iter().find(|s| s.name == "MAX_Y").unwrap();
+        assert_eq!(d.doc, None);
     }
 
     #[test]
