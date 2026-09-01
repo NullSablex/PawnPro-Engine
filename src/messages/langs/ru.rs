@@ -22,6 +22,11 @@ pub fn get(key: MsgKey) -> &'static str {
         MsgKey::StockUnused => "stock-функция \"{}\" объявлена, но не используется",
         MsgKey::SymDeprecated => "\"{}\" помечен как устаревший",
         MsgKey::SymDeprecatedUsage => "\"{}\" устарел",
+        MsgKey::PragmaUnknown => "`#pragma {}` не распознан компилятором",
+        MsgKey::PragmaUnknownDidYouMean => "`#pragma {}` не распознан — возможно, `{sug}`?",
+        MsgKey::PragmaDeprecatedQuoted => {
+            "`#pragma deprecated` берёт остаток строки как текст — кавычки попадут в сообщение"
+        }
         MsgKey::SymFromDeprecatedFile => "\"{}\" принадлежит устаревшему include",
         MsgKey::IncludeDeprecated => "\"{}\" устарел",
         MsgKey::ParamUnused => "Параметр \"{}\" объявлен, но не используется",

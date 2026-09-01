@@ -80,6 +80,14 @@ caso encontre por favor relate para ajudar a manter a consistência dos dados.
   por ecossistema (cargo, GitHub Actions, pip) em vez de abrir um PR por
   dependência, reduzindo o ruído de manutenção
 
+- **`PP0019` — `#pragma` desconhecido ou malformado** — o compilador rejeita uma
+  diretiva que não conhece (erro 207), mas só na compilação; agora o aviso
+  aparece enquanto se escreve, com *quick fix*. Cobre o nome errado
+  (`#pragma deprected` → sugere `deprecated`, comparando com a lista do
+  compilador) e a mensagem de `deprecated` escrita entre aspas — a diretiva toma
+  o resto da linha como texto livre, então as aspas entrariam na mensagem em vez
+  de delimitá-la. Aspas no meio do texto continuam sendo texto legítimo
+
 ### Corrigido
 - **`native`/`forward` com assinatura quebrada em várias linhas eram ignorados** —
   ao fechar o `)`, o parser só criava o símbolo se a linha trouxesse `{`; sem

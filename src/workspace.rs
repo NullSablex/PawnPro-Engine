@@ -7,7 +7,7 @@ use dashmap::DashMap;
 use crate::analyzer::PawnDiagnostic;
 use crate::analyzer::includes::collect_included_files;
 use crate::analyzer::{
-    deprecated, hints, includes, indentation, naming, semantic, undefined, unused,
+    deprecated, hints, includes, indentation, naming, pragmas, semantic, undefined, unused,
 };
 use crate::config::EngineConfig;
 use crate::messages::Locale;
@@ -228,6 +228,7 @@ impl WorkspaceState {
         diags.extend(deprecated::analyze_deprecated(
             &text, &file_path, &parsed, &inc_paths, &resolved, locale,
         ));
+        diags.extend(pragmas::analyze_pragmas(&text, locale));
         diags.extend(hints::analyze_hints(&text, &parsed.symbols, locale));
         diags.extend(undefined::analyze_undefined(
             &text,

@@ -17,6 +17,13 @@ pub fn get(key: MsgKey) -> &'static str {
         MsgKey::StockUnused => "\"{}\" função stock declarada mas não utilizada",
         MsgKey::SymDeprecated => "\"{}\" está marcado como depreciado",
         MsgKey::SymDeprecatedUsage => "\"{}\" está depreciado",
+        MsgKey::PragmaUnknown => "`#pragma {}` não é reconhecido pelo compilador",
+        MsgKey::PragmaUnknownDidYouMean => {
+            "`#pragma {}` não é reconhecido — você quis dizer `{sug}`?"
+        }
+        MsgKey::PragmaDeprecatedQuoted => {
+            "`#pragma deprecated` toma o resto da linha como texto — as aspas entrariam na mensagem"
+        }
         MsgKey::SymFromDeprecatedFile => "\"{}\" pertence a um include depreciado",
         MsgKey::IncludeDeprecated => "\"{}\" está depreciado",
         MsgKey::ParamUnused => "Parâmetro \"{}\" declarado mas não utilizado",

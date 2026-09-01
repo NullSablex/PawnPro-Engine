@@ -701,6 +701,7 @@ fn code_actions_for(
     };
     let mut actions: CodeActionResponse = Vec::new();
     naming_actions(state, uri, params, &text, &mut actions);
+    pragma_actions(uri, params, &text, &mut actions);
     removal_actions(uri, params, &text, &mut actions);
     actions
 }
@@ -739,6 +740,69 @@ fn naming_actions(
                 ..Default::default()
             }));
         }
+    }
+}
+
+/// Quick fixes das diretivas `#pragma` malformadas (PP0019): corrigir o nome
+/// da diretiva ou tirar as aspas da mensagem de `deprecated`.
+fn pragma_actions(
+    uri: &str,
+    params: &CodeActionParams,
+    text: &str,
+    actions: &mut CodeActionResponse,
+) {
+    use crate::analyzer::pragmas::{PragmaFix, collect_issues};
+
+    let diags = diagnostics_with_code(params, "PP0019");
+    if diags.is_empty() {
+        return;
+    }
+    let issues = collect_issues(text);
+    for diag in diags {
+        // Casa pela posição: um arquivo pode ter várias diretivas com problema.
+        let Some(issue) = issues
+            .iter()
+            .find(|i| i.line == diag.range.start.line && i.col == diag.range.start.character)
+        else {
+            continue;
+        };
+        let Some(fix) = &issue.fix else { continue };
+        let (title, new_text) = match fix {
+            PragmaFix::Rename(s) => (format!("Trocar para `#pragma {s}`"), s.clone()),
+            PragmaFix::Unquote(inner) => {
+                ("Remover as aspas da mensagem".to_string(), inner.clone())
+            }
+        };
+        let range = Range {
+            start: Position {
+                line: issue.line,
+                character: issue.col,
+            },
+            end: Position {
+                line: issue.line,
+                character: issue.col_end,
+            },
+        };
+        actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+            title,
+            kind: Some(CodeActionKind::QUICKFIX),
+            diagnostics: Some(vec![diag.clone()]),
+            edit: Some(replacement_edit(uri, range, new_text)),
+            is_preferred: Some(true),
+            ..Default::default()
+        }));
+    }
+}
+
+/// `WorkspaceEdit` que substitui `range` por `new_text` no arquivo `uri`.
+fn replacement_edit(uri: &str, range: Range, new_text: String) -> WorkspaceEdit {
+    let mut changes = std::collections::HashMap::new();
+    if let Ok(parsed) = uri.parse::<Url>() {
+        changes.insert(parsed, vec![TextEdit { range, new_text }]);
+    }
+    WorkspaceEdit {
+        changes: Some(changes),
+        ..Default::default()
     }
 }
 

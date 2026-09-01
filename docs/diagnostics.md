@@ -24,6 +24,25 @@ O motor emite diagnósticos identificados por códigos `PP####`.
 | `PP0016` | Aviso¹ | Função sem keyword declarada mas nunca chamada |
 | `PP0017` | Aviso | Indentação inconsistente dentro de um bloco |
 | `PP0018` | Hint | Nome de identificador pobre (assistente de nomes; desligado por padrão) |
+| `PP0019` | Aviso | `#pragma` desconhecido ou malformado |
+
+### PP0019 — `#pragma` desconhecido ou malformado
+
+O compilador rejeita uma diretiva que não conheça (erro 207), mas só na compilação. Este diagnóstico antecipa o erro e oferece a correção.
+
+Cobre dois casos:
+
+- **Nome não reconhecido** — comparado com a lista do compilador (`sc2.c`); quando há uma diretiva próxima, é sugerida: `#pragma deprected` → `#pragma deprecated`.
+- **Mensagem de `deprecated` entre aspas** — a diretiva toma **o resto da linha como texto livre**, sem aspas:
+
+  ```pawn
+  #pragma deprecated Use BanPlayerFor   // correto
+  #pragma deprecated "Use BanPlayerFor" // as aspas entram na mensagem
+  ```
+
+  Aspas no meio do texto são literais legítimas e não são sinalizadas.
+
+Nos dois casos há *quick fix*.
 
 > ¹ Marcados com `DiagnosticTag::UNNECESSARY` — o editor exibe o símbolo desbotado além do sublinhado diagnóstico.
 
