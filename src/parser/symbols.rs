@@ -246,14 +246,31 @@ fn parse_params(raw: &str) -> Vec<Param> {
     params
 }
 
-/// `true` se o comentário é só uma régua de separação (`// ------`, `// =====`),
-/// sem texto — ornamento de seção, não documentação.
+/// Caracteres usados como ornamento em cabeçalhos de seção.
+const RULE_CHARS: [char; 6] = ['-', '=', '*', '_', '#', '~'];
+
+/// `true` se o comentário é um separador de seção, e não documentação.
+///
+/// Cobre a régua pura (`// ------`) e o cabeçalho que traz texto entre corridas
+/// de ornamento (`// --- Seção 9 ---------`). O que separa um do outro é a
+/// corrida: três ou mais ornamentos seguidos não aparecem em prosa, ao passo
+/// que um hífen isolado é comum (`// vale -1 quando ausente`).
 fn is_comment_rule(line: &str) -> bool {
     let body = line.trim_start_matches('/').trim();
-    !body.is_empty()
-        && body
-            .chars()
-            .all(|c| matches!(c, '-' | '=' | '*' | '_' | '#' | '~'))
+    if body.is_empty() {
+        return false;
+    }
+    let is_ornament = |c: char| RULE_CHARS.contains(&c);
+
+    // Só ornamento: régua pura.
+    if body.chars().all(is_ornament) {
+        return true;
+    }
+
+    // Cabeçalho: abre e fecha com uma corrida longa de ornamento.
+    let opening = body.chars().take_while(|c| is_ornament(*c)).count();
+    let closing = body.chars().rev().take_while(|c| is_ornament(*c)).count();
+    opening >= 3 && closing >= 3
 }
 
 fn extract_doc(lines: &[&str], line_idx: usize) -> Option<String> {
@@ -1283,13 +1300,36 @@ mod tests {
     }
 
     #[test]
+    fn cabecalho_de_secao_com_texto_tambem_e_regua() {
+        // `// --- Seção 9 -----` é separador, não documentação.
+        assert!(is_comment_rule(
+            "// --- PP0004: `stock` sem corpo ---------"
+        ));
+        assert!(is_comment_rule("// ===== Parte 2 ====="));
+        // Um hífen isolado é prosa comum, não ornamento.
+        assert!(!is_comment_rule("// vale -1 quando ausente"));
+        assert!(!is_comment_rule("// a - b resulta em zero"));
+        // Corrida curta não caracteriza cabeçalho.
+        assert!(!is_comment_rule("// -- quase --"));
+    }
+
+    #[test]
+    fn cabecalho_com_texto_nao_vira_doc() {
+        let src = "// --- Seção 4: sem corpo ---------\nstock Fn(playerid);\n";
+        let f = parse_file(src);
+        assert_eq!(f.symbols.iter().find(|s| s.name == "Fn").unwrap().doc, None);
+    }
+
+    #[test]
     fn regua_reconhece_varios_ornamentos() {
         assert!(is_comment_rule("// -----"));
         assert!(is_comment_rule("//====="));
         assert!(is_comment_rule("// ***"));
         assert!(is_comment_rule("// ~~~~~"));
-        // Com texto, não é régua.
-        assert!(!is_comment_rule("// --- Seção 9 ---"));
+        // Texto entre corridas de ornamento é cabeçalho de seção — ver
+        // `cabecalho_de_secao_com_texto_tambem_e_regua`.
+        assert!(is_comment_rule("// --- Seção 9 ---"));
+        // Prosa não é.
         assert!(!is_comment_rule("// Bane alguém."));
         assert!(!is_comment_rule("//"));
     }

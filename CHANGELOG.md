@@ -111,12 +111,15 @@ caso encontre por favor relate para ajudar a manter a consistência dos dados.
   de delimitá-la. Aspas no meio do texto continuam sendo texto legítimo
 
 ### Corrigido
-- **Réguas de separação viravam documentação** — um cabeçalho de seção
-  (`// ------------`) acima de uma função era lido como doc comment dela, e o
-  hover exibia a régua e o texto da seção no lugar da documentação. Uma linha
-  de comentário composta só de `-`, `=`, `*`, `_`, `#` ou `~` passa a encerrar
-  a varredura: é ornamento, e o que está acima dela pertence a outra seção.
-  Comentários `//` com texto continuam sendo documentação, como antes
+- **Réguas de separação viravam documentação** — um cabeçalho de seção acima de
+  uma função era lido como doc comment dela, e o hover exibia a régua e o texto
+  da seção no lugar da documentação. Passam a encerrar a varredura tanto a
+  régua pura (`// ---------`) quanto o cabeçalho com texto entre ornamentos
+  (`// --- Seção 9 ---------`): são separadores, e o que está acima deles
+  pertence a outra parte do arquivo. O que distingue um do outro é a corrida de
+  três ou mais ornamentos, que não aparece em prosa — um hífen isolado
+  (`// vale -1 quando ausente`) continua sendo documentação, como qualquer
+  comentário `//` com texto
 - **Doc comment de um símbolo aparecendo no hover de outro** — quando o
   comentário era um bloco de uma linha só (`/** … */`), a varredura empurrava
   essa linha e ia procurar o `/*` de abertura **a partir da linha anterior**,
