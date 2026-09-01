@@ -12,7 +12,7 @@ Servidor LSP em Rust para a linguagem **Pawn** (SA-MP / open.mp). Comunica-se co
 - **Nunca usar `panic!` em caminhos de análise**. O motor precisa sobreviver a qualquer entrada malformada.
 - **Regexes estáticas via `once_cell::sync::Lazy<Regex>`**. Nunca compilar regex dentro de loops.
 - **Nunca interpolar input do usuário diretamente em `Regex::new`** sem escapar metacaracteres.
-- **`cargo clippy -- -D warnings` deve passar sem erros** antes de qualquer commit.
+- **`cargo clippy --all-targets -- -W clippy::pedantic -D warnings` deve passar sem erros** antes de qualquer commit.
 - **Novos diagnósticos sempre em `analyzer/codes.rs`** com constante `pub const PP####`.
 - **`parsed_cache` usa `PathBuf` como chave**, não `String` (URI). Converter URI → path antes de acessar.
 - **`dep_graph` usa `PathBuf` em ambos os lados** — nunca `String`/URI. Converter antes de inserir.
@@ -220,7 +220,7 @@ Campos aceitos em `initializationOptions` e em `workspace/didChangeConfiguration
 cargo build                    # debug
 cargo build --release          # release (LTO + strip + panic=abort)
 cargo test                     # testes unitários
-cargo clippy -- -D warnings    # deve passar sem erros
+cargo clippy --all-targets -- -W clippy::pedantic -D warnings    # deve passar sem erros
 ```
 
 ---

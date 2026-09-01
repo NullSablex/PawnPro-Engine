@@ -64,7 +64,10 @@ cd pawnpro-engine
 cargo build          # debug
 cargo build --release
 cargo test
-cargo clippy -- -D warnings
+cargo fmt --all --check
+# Exatamente o que o CI roda — sem as flags, um lint pedantic ou um aviso
+# num teste passa aqui e reprova lá.
+cargo clippy --all-targets -- -W clippy::pedantic -D warnings
 ```
 
 O binário de debug é detectado automaticamente pela extensão PawnPro se estiver em `../pawnpro-engine/target/debug/` ou `../pawnpro-engine/target/release/`.

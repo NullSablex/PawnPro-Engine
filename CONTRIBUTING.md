@@ -26,7 +26,7 @@ cargo test
 
 **Lint (obrigatório antes de PR):**
 ```bash
-cargo clippy -- -D warnings
+cargo clippy --all-targets -- -W clippy::pedantic -D warnings
 ```
 
 **Build release:**
@@ -55,7 +55,7 @@ docs/           ← documentação detalhada (não incluída nos releases)
 - **Nunca `panic!` em caminhos de análise** — o motor precisa sobreviver a qualquer entrada malformada.
 - **Regexes sempre como `static Lazy<Regex>`** — nunca compilar dentro de loops.
 - **Nunca interpolar input não escapado em `Regex::new`**.
-- **`cargo clippy -- -D warnings` deve passar sem erros** — obrigatório.
+- **`cargo clippy --all-targets -- -W clippy::pedantic -D warnings` deve passar sem erros** — obrigatório.
 - **Novos diagnósticos sempre com constante em `analyzer/codes.rs`**.
 - **Funções utilitárias de texto em `parser/lexer.rs`** — não duplicar `decode_bytes`, `strip_line_comments`, `update_brace_depth` ou `pragma_deprecated_message` em outros módulos.
 
@@ -71,7 +71,7 @@ docs/           ← documentação detalhada (não incluída nos releases)
 
 1. Crie um branch a partir de `main`: `git checkout -b feat/minha-feature`
 2. Faça as alterações seguindo as regras acima.
-3. Certifique-se que `cargo clippy -- -D warnings` e `cargo test` passam.
+3. Certifique-se que `cargo clippy --all-targets -- -W clippy::pedantic -D warnings` e `cargo test` passam.
 4. Abra a PR com uma descrição clara do que foi alterado e por quê.
 
 ## Reportando bugs
