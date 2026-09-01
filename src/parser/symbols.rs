@@ -246,6 +246,16 @@ fn parse_params(raw: &str) -> Vec<Param> {
     params
 }
 
+/// `true` se o comentário é só uma régua de separação (`// ------`, `// =====`),
+/// sem texto — ornamento de seção, não documentação.
+fn is_comment_rule(line: &str) -> bool {
+    let body = line.trim_start_matches('/').trim();
+    !body.is_empty()
+        && body
+            .chars()
+            .all(|c| matches!(c, '-' | '=' | '*' | '_' | '#' | '~'))
+}
+
 fn extract_doc(lines: &[&str], line_idx: usize) -> Option<String> {
     // Guarda as fatias e só materializa a `String` no fim: um bloco de doc tem
     // várias linhas, e uma alocação por linha aparece no perfil de um include
@@ -272,6 +282,11 @@ fn extract_doc(lines: &[&str], line_idx: usize) -> Option<String> {
             continue;
         }
         if l.starts_with("//") {
+            // Uma régua (`// -----`) separa seções do arquivo; não documenta o
+            // símbolo abaixo, e tudo acima dela pertence a outra seção.
+            if is_comment_rule(l) {
+                break;
+            }
             doc_lines.push(l);
             found = true;
         } else if l.ends_with("*/") {
@@ -1225,6 +1240,58 @@ mod tests {
         let f = parse_file(src);
         let d = f.symbols.iter().find(|s| s.name == "MAX_Y").unwrap();
         assert_eq!(d.doc, None);
+    }
+
+    #[test]
+    fn regua_de_separacao_nao_e_doc() {
+        // Uma régua separa seções do arquivo; nem ela nem o que vem acima
+        // documentam o símbolo abaixo.
+        let src = "// -----------------\n// 9. Outra seção\n// -----------------\n\nstock Fn() { return 1; }\n";
+        let f = parse_file(src);
+        assert_eq!(f.symbols.iter().find(|s| s.name == "Fn").unwrap().doc, None);
+    }
+
+    #[test]
+    fn comentario_de_linha_continua_sendo_doc() {
+        // `//` acima da declaração é convenção legítima em Pawn — só a régua sai.
+        let src = "// Devolve o nome do jogador.\nstock Nome() { return 1; }\n";
+        let f = parse_file(src);
+        let doc = f
+            .symbols
+            .iter()
+            .find(|s| s.name == "Nome")
+            .unwrap()
+            .doc
+            .clone();
+        assert_eq!(doc.as_deref(), Some("// Devolve o nome do jogador."));
+    }
+
+    #[test]
+    fn doc_apos_uma_regua_e_preservado() {
+        // A régua encerra a varredura, mas o que está entre ela e a declaração
+        // é documentação de verdade.
+        let src = "// =========\n// Bane alguém.\nstock Ban() { return 1; }\n";
+        let f = parse_file(src);
+        let doc = f
+            .symbols
+            .iter()
+            .find(|s| s.name == "Ban")
+            .unwrap()
+            .doc
+            .clone();
+        assert_eq!(doc.as_deref(), Some("// Bane alguém."));
+    }
+
+    #[test]
+    fn regua_reconhece_varios_ornamentos() {
+        assert!(is_comment_rule("// -----"));
+        assert!(is_comment_rule("//====="));
+        assert!(is_comment_rule("// ***"));
+        assert!(is_comment_rule("// ~~~~~"));
+        // Com texto, não é régua.
+        assert!(!is_comment_rule("// --- Seção 9 ---"));
+        assert!(!is_comment_rule("// Bane alguém."));
+        assert!(!is_comment_rule("//"));
     }
 
     #[test]
