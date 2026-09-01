@@ -111,15 +111,14 @@ caso encontre por favor relate para ajudar a manter a consistência dos dados.
   de delimitá-la. Aspas no meio do texto continuam sendo texto legítimo
 
 ### Corrigido
-- **Réguas de separação viravam documentação** — um cabeçalho de seção acima de
-  uma função era lido como doc comment dela, e o hover exibia a régua e o texto
-  da seção no lugar da documentação. Passam a encerrar a varredura tanto a
-  régua pura (`// ---------`) quanto o cabeçalho com texto entre ornamentos
-  (`// --- Seção 9 ---------`): são separadores, e o que está acima deles
-  pertence a outra parte do arquivo. O que distingue um do outro é a corrida de
-  três ou mais ornamentos, que não aparece em prosa — um hífen isolado
-  (`// vale -1 quando ausente`) continua sendo documentação, como qualquer
-  comentário `//` com texto
+- **Comentário de outra parte do arquivo aparecendo no hover** — a varredura do
+  doc comment subia o arquivo acumulando linhas, e acabava trazendo réguas,
+  cabeçalhos de seção e o texto de outras funções para o hover do símbolo
+  abaixo. Passa a valer a mesma regra do Javadoc e do PHPDoc: **só o bloco
+  imediatamente acima da declaração** — um `/* … */` colado nela, ou uma
+  sequência contígua de linhas `//`. Uma linha em branco, ou qualquer código
+  entre os dois, separa. Entre o comentário e a declaração continua podendo
+  haver o `#pragma deprecated` que marca o símbolo
 - **Doc comment de um símbolo aparecendo no hover de outro** — quando o
   comentário era um bloco de uma linha só (`/** … */`), a varredura empurrava
   essa linha e ia procurar o `/*` de abertura **a partir da linha anterior**,

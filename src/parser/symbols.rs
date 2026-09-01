@@ -246,101 +246,75 @@ fn parse_params(raw: &str) -> Vec<Param> {
     params
 }
 
-/// Caracteres usados como ornamento em cabeçalhos de seção.
-const RULE_CHARS: [char; 6] = ['-', '=', '*', '_', '#', '~'];
-
-/// `true` se o comentário é um separador de seção, e não documentação.
+/// Extrai o comentário de documentação de um símbolo declarado em `line_idx`.
 ///
-/// Cobre a régua pura (`// ------`) e o cabeçalho que traz texto entre corridas
-/// de ornamento (`// --- Seção 9 ---------`). O que separa um do outro é a
-/// corrida: três ou mais ornamentos seguidos não aparecem em prosa, ao passo
-/// que um hífen isolado é comum (`// vale -1 quando ausente`).
-fn is_comment_rule(line: &str) -> bool {
-    let body = line.trim_start_matches('/').trim();
-    if body.is_empty() {
-        return false;
+/// A regra é a mesma do Javadoc/PHPDoc: vale **um bloco só, o imediatamente
+/// acima da declaração**. Isso evita o modo de falha em que a varredura sobe o
+/// arquivo acumulando comentários de outras seções — e dispensa tratar régua,
+/// cabeçalho e ornamento como casos especiais, porque nada além do bloco
+/// vizinho é considerado.
+///
+/// São aceitos:
+///
+/// - o bloco `/* … */` (em uma ou várias linhas) colado na declaração;
+/// - uma sequência contígua de linhas `//`, colada na declaração — convenção
+///   comum em Pawn.
+///
+/// Entre o comentário e a declaração pode haver `#pragma deprecated`, que é a
+/// diretiva que marca o símbolo. Uma linha em branco separa: o que estiver
+/// acima dela pertence a outra coisa.
+fn extract_doc(lines: &[&str], line_idx: usize) -> Option<String> {
+    // Pula o `#pragma deprecated` entre o comentário e a declaração.
+    let mut idx = line_idx.checked_sub(1)?;
+    while is_pragma_deprecated(lines[idx].trim()) {
+        idx = idx.checked_sub(1)?;
     }
-    let is_ornament = |c: char| RULE_CHARS.contains(&c);
 
-    // Só ornamento: régua pura.
-    if body.chars().all(is_ornament) {
-        return true;
+    let last = lines[idx].trim();
+    if last.ends_with("*/") {
+        block_doc(lines, idx)
+    } else if last.starts_with("//") {
+        line_doc(lines, idx)
+    } else {
+        // Qualquer outra coisa (código, linha em branco) rompe a adjacência.
+        None
     }
-
-    // Cabeçalho: abre e fecha com uma corrida longa de ornamento.
-    let opening = body.chars().take_while(|c| is_ornament(*c)).count();
-    let closing = body.chars().rev().take_while(|c| is_ornament(*c)).count();
-    opening >= 3 && closing >= 3
 }
 
-fn extract_doc(lines: &[&str], line_idx: usize) -> Option<String> {
-    // Guarda as fatias e só materializa a `String` no fim: um bloco de doc tem
-    // várias linhas, e uma alocação por linha aparece no perfil de um include
-    // grande.
-    let mut doc_lines: Vec<&str> = Vec::new();
-    let mut found = false;
-    // Caminha para cima a partir da linha anterior. Índices em `usize` com
-    // decremento via `checked_sub` evitam o uso de `isize` (e os casts que ele
-    // exigiria); ao chegar em 0 o loop termina.
-    let mut i = line_idx.checked_sub(1);
-    while let Some(idx) = i {
-        let l = lines[idx].trim();
-        if l.is_empty() {
-            if found {
-                break;
-            }
-            i = idx.checked_sub(1);
-            continue;
+/// Bloco `/* … */` que termina em `idx`, subindo até o `/*` que o abre.
+fn block_doc(lines: &[&str], idx: usize) -> Option<String> {
+    let mut out: Vec<&str> = Vec::new();
+    let mut i = idx;
+    loop {
+        let l = lines[i].trim();
+        out.push(l);
+        // `/** … */` numa linha só já está completo aqui.
+        if l.contains("/*") {
+            out.reverse();
+            return Some(out.join("\n"));
         }
-        // `#pragma deprecated` fica entre o comentário e a declaração; pular a
-        // diretiva mantém o doc ligado ao símbolo que ela marca.
-        if is_pragma_deprecated(l) && !found {
-            i = idx.checked_sub(1);
-            continue;
-        }
-        if l.starts_with("//") {
-            // Uma régua (`// -----`) separa seções do arquivo; não documenta o
-            // símbolo abaixo, e tudo acima dela pertence a outra seção.
-            if is_comment_rule(l) {
-                break;
-            }
-            doc_lines.push(l);
-            found = true;
-        } else if l.ends_with("*/") {
-            doc_lines.push(l);
-            // Um bloco de uma linha só (`/** … */`) já está completo; procurar
-            // o início a partir da linha anterior atravessaria o código acima
-            // até casar com o `/*` de outro comentário.
-            if !l.starts_with("/*") {
-                let mut j = idx.checked_sub(1);
-                let mut open_found = false;
-                while let Some(jdx) = j {
-                    let ll = lines[jdx].trim();
-                    doc_lines.push(ll);
-                    if ll.contains("/*") {
-                        open_found = true;
-                        break;
-                    }
-                    j = jdx.checked_sub(1);
-                }
-                // Sem `/*` que abra, o `*/` não pertence a um bloco de doc
-                // deste símbolo: descarta em vez de arrastar o arquivo inteiro.
-                if !open_found {
-                    return None;
-                }
-            }
-            break;
-        } else {
+        // Sem `/*` que abra, o `*/` não pertence a um bloco deste símbolo.
+        i = i.checked_sub(1)?;
+    }
+}
+
+/// Sequência contígua de linhas `//` terminando em `idx`.
+fn line_doc(lines: &[&str], idx: usize) -> Option<String> {
+    let mut out: Vec<&str> = Vec::new();
+    let mut i = Some(idx);
+    while let Some(cur) = i {
+        let l = lines[cur].trim();
+        if !l.starts_with("//") {
             break;
         }
-        i = idx.checked_sub(1);
+        out.push(l);
+        i = cur.checked_sub(1);
     }
-    if doc_lines.is_empty() {
-        None
-    } else {
-        doc_lines.reverse();
-        Some(doc_lines.join("\n"))
+    if out.is_empty() {
+        return None;
     }
+    out.reverse();
+    Some(out.join("\n"))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1238,100 +1212,104 @@ mod tests {
         );
     }
 
+    // --- extract_doc: um bloco só, o imediatamente acima ---------------
+
+    fn doc_de(src: &str, nome: &str) -> Option<String> {
+        parse_file(src)
+            .symbols
+            .iter()
+            .find(|s| s.name == nome)?
+            .doc
+            .clone()
+    }
+
     #[test]
-    fn doc_de_bloco_de_uma_linha_nao_atravessa_o_codigo_acima() {
-        // Um `/** … */` de uma linha já está completo: procurar o `/*` de
-        // abertura acima faria a varredura engolir funções inteiras até casar
-        // com o `/**` de outro comentário.
-        let src = "/**\n * Doc da funcao.\n */\nstock Antiga() { return 1; }\n\n/** Limite antigo. */\n#define MAX_X (50)\n";
+    fn bloco_colado_na_declaracao_e_o_doc() {
+        let src = "/**\n * Bane alguém.\n */\nstock Ban() { return 1; }\n";
+        assert_eq!(
+            doc_de(src, "Ban").as_deref(),
+            Some("/**\n* Bane alguém.\n*/")
+        );
+    }
+
+    #[test]
+    fn bloco_de_uma_linha_so() {
+        let src = "/** Limite antigo. */\n#define MAX_X (50)\n";
+        assert_eq!(
+            doc_de(src, "MAX_X").as_deref(),
+            Some("/** Limite antigo. */")
+        );
+    }
+
+    #[test]
+    fn linhas_de_comentario_contiguas_sao_doc() {
+        let src = "// Devolve o nome.\n// Vazio se o id não existir.\nstock Nome() { return 1; }\n";
+        assert_eq!(
+            doc_de(src, "Nome").as_deref(),
+            Some("// Devolve o nome.\n// Vazio se o id não existir.")
+        );
+    }
+
+    #[test]
+    fn so_o_bloco_vizinho_conta() {
+        // O doc da função acima não pode escorrer para a de baixo.
+        let src = "/**\n * Doc da primeira.\n */\nstock Primeira() { return 1; }\n\nstock Segunda() { return 1; }\n";
+        assert_eq!(doc_de(src, "Segunda"), None);
+    }
+
+    #[test]
+    fn linha_em_branco_separa_o_doc_da_declaracao() {
+        // Com uma linha em branco no meio, o comentário não é do símbolo.
+        let src = "// Anotação solta.\n\nstock Fn() { return 1; }\n";
+        assert_eq!(doc_de(src, "Fn"), None);
+    }
+
+    #[test]
+    fn codigo_entre_o_comentario_e_a_declaracao_rompe_o_vinculo() {
+        let src =
+            "// Doc da primeira.\nstock Primeira() { return 1; }\nstock Segunda() { return 1; }\n";
+        assert_eq!(doc_de(src, "Segunda"), None);
+    }
+
+    #[test]
+    fn regua_e_cabecalho_de_secao_nao_escorrem_para_o_simbolo() {
+        // Este era o modo de falha: a varredura subia o arquivo acumulando
+        // comentários de outras seções. Agora nem chega lá — só o bloco
+        // vizinho é lido, e a linha em branco encerra.
+        let src = "// ------------------------------\n// 9. Outra seção\n// ------------------------------\n\nstock Fn() { return 1; }\n";
+        assert_eq!(doc_de(src, "Fn"), None);
+
+        let src = "// --- PP0004: sem corpo -------------\n\nstock Outra(playerid);\n";
+        assert_eq!(doc_de(src, "Outra"), None);
+    }
+
+    #[test]
+    fn cabecalho_colado_na_declaracao_ainda_e_lido() {
+        // Sem linha em branco, é adjacente — e a regra vale para todos por
+        // igual, sem adivinhar a intenção de quem escreveu.
+        let src = "// --- Seção 9 ---\nstock Fn() { return 1; }\n";
+        assert_eq!(doc_de(src, "Fn").as_deref(), Some("// --- Seção 9 ---"));
+    }
+
+    #[test]
+    fn pragma_entre_o_doc_e_a_declaracao_nao_rompe() {
+        let src = "/**\n * Bane alguém.\n */\n#pragma deprecated Use BanPlayerFor\nstock Ban() { return 1; }\n";
         let f = parse_file(src);
-        let d = f.symbols.iter().find(|s| s.name == "MAX_X").unwrap();
-        assert_eq!(d.doc.as_deref(), Some("/** Limite antigo. */"));
+        let s = f.symbols.iter().find(|s| s.name == "Ban").unwrap();
+        assert!(s.deprecated);
+        assert!(s.doc.as_deref().unwrap().contains("Bane alguém."));
     }
 
     #[test]
     fn fim_de_bloco_sem_abertura_nao_vira_doc() {
-        // `*/` solto acima da declaração: sem `/*` que abra, não é doc deste
-        // símbolo — arrastar o arquivo até o topo seria pior que não ter doc.
-        let src = "stock Outra() { return 1; }\nalgo */\n#define MAX_Y (1)\n";
-        let f = parse_file(src);
-        let d = f.symbols.iter().find(|s| s.name == "MAX_Y").unwrap();
-        assert_eq!(d.doc, None);
+        // `*/` solto: sem `/*` que abra, não há bloco.
+        let src = "algo */\n#define MAX_Y (1)\n";
+        assert_eq!(doc_de(src, "MAX_Y"), None);
     }
 
     #[test]
-    fn regua_de_separacao_nao_e_doc() {
-        // Uma régua separa seções do arquivo; nem ela nem o que vem acima
-        // documentam o símbolo abaixo.
-        let src = "// -----------------\n// 9. Outra seção\n// -----------------\n\nstock Fn() { return 1; }\n";
-        let f = parse_file(src);
-        assert_eq!(f.symbols.iter().find(|s| s.name == "Fn").unwrap().doc, None);
-    }
-
-    #[test]
-    fn comentario_de_linha_continua_sendo_doc() {
-        // `//` acima da declaração é convenção legítima em Pawn — só a régua sai.
-        let src = "// Devolve o nome do jogador.\nstock Nome() { return 1; }\n";
-        let f = parse_file(src);
-        let doc = f
-            .symbols
-            .iter()
-            .find(|s| s.name == "Nome")
-            .unwrap()
-            .doc
-            .clone();
-        assert_eq!(doc.as_deref(), Some("// Devolve o nome do jogador."));
-    }
-
-    #[test]
-    fn doc_apos_uma_regua_e_preservado() {
-        // A régua encerra a varredura, mas o que está entre ela e a declaração
-        // é documentação de verdade.
-        let src = "// =========\n// Bane alguém.\nstock Ban() { return 1; }\n";
-        let f = parse_file(src);
-        let doc = f
-            .symbols
-            .iter()
-            .find(|s| s.name == "Ban")
-            .unwrap()
-            .doc
-            .clone();
-        assert_eq!(doc.as_deref(), Some("// Bane alguém."));
-    }
-
-    #[test]
-    fn cabecalho_de_secao_com_texto_tambem_e_regua() {
-        // `// --- Seção 9 -----` é separador, não documentação.
-        assert!(is_comment_rule(
-            "// --- PP0004: `stock` sem corpo ---------"
-        ));
-        assert!(is_comment_rule("// ===== Parte 2 ====="));
-        // Um hífen isolado é prosa comum, não ornamento.
-        assert!(!is_comment_rule("// vale -1 quando ausente"));
-        assert!(!is_comment_rule("// a - b resulta em zero"));
-        // Corrida curta não caracteriza cabeçalho.
-        assert!(!is_comment_rule("// -- quase --"));
-    }
-
-    #[test]
-    fn cabecalho_com_texto_nao_vira_doc() {
-        let src = "// --- Seção 4: sem corpo ---------\nstock Fn(playerid);\n";
-        let f = parse_file(src);
-        assert_eq!(f.symbols.iter().find(|s| s.name == "Fn").unwrap().doc, None);
-    }
-
-    #[test]
-    fn regua_reconhece_varios_ornamentos() {
-        assert!(is_comment_rule("// -----"));
-        assert!(is_comment_rule("//====="));
-        assert!(is_comment_rule("// ***"));
-        assert!(is_comment_rule("// ~~~~~"));
-        // Texto entre corridas de ornamento é cabeçalho de seção — ver
-        // `cabecalho_de_secao_com_texto_tambem_e_regua`.
-        assert!(is_comment_rule("// --- Seção 9 ---"));
-        // Prosa não é.
-        assert!(!is_comment_rule("// Bane alguém."));
-        assert!(!is_comment_rule("//"));
+    fn declaracao_na_primeira_linha_nao_tem_doc() {
+        assert_eq!(doc_de("stock Fn() { return 1; }\n", "Fn"), None);
     }
 
     #[test]
