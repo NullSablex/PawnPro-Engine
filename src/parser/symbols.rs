@@ -260,6 +260,12 @@ fn extract_doc(lines: &[&str], line_idx: usize) -> Option<String> {
             i = idx.checked_sub(1);
             continue;
         }
+        // `#pragma deprecated` fica entre o comentário e a declaração; pular a
+        // diretiva mantém o doc ligado ao símbolo que ela marca.
+        if pragma_deprecated_message(l).is_some() && !found {
+            i = idx.checked_sub(1);
+            continue;
+        }
         if l.starts_with("//") {
             doc_lines.push(l.to_string());
             found = true;
@@ -435,7 +441,10 @@ fn continue_multiline_func(
     let (pidx, pcol, pname, pparams, pkind, pdep, pdoc) =
         multiline_func.take().expect("multiline_func presente");
     let rest = &line[close_pos + 1..];
-    if rest.contains('{') {
+    // `native` e `forward` declaram sem corpo e terminam em `;` — esperar por
+    // uma `{` que nunca vem descartaria o símbolo.
+    let bodyless = matches!(pkind, SymbolKind::Native | SymbolKind::Forward);
+    if bodyless || rest.contains('{') {
         let parsed_params = parse_params(&pparams);
         result.symbols.push(Symbol {
             signature: Some(format!("{}({})", pname, pparams.trim())),
@@ -1103,6 +1112,79 @@ mod tests {
             f.symbols
                 .iter()
                 .any(|s| s.name == "MAX_ZONES" && matches!(s.kind, SymbolKind::StaticConst))
+        );
+    }
+
+    #[test]
+    fn doc_survives_pragma_between_comment_and_decl() {
+        // A diretiva fica entre o comentário e a declaração; o doc é do símbolo
+        // que ela marca, não de quem vier antes.
+        let src = "/**\n * Bane com motivo.\n */\n#pragma deprecated Use BanPlayerFor\nnative BanEx(playerid);";
+        let f = parse_file(src);
+        let sym = f.symbols.iter().find(|s| s.name == "BanEx").unwrap();
+        assert!(sym.deprecated);
+        assert!(
+            sym.doc
+                .as_deref()
+                .is_some_and(|d| d.contains("Bane com motivo")),
+            "doc: {:?}",
+            sym.doc
+        );
+    }
+
+    #[test]
+    fn parses_multiline_native() {
+        // Assinatura quebrada em várias linhas, como no omp-stdlib.
+        let src = "native BanEx(\n    playerid,\n    const reason[]\n);";
+        let f = parse_file(src);
+        let sym = f
+            .symbols
+            .iter()
+            .find(|s| s.name == "BanEx")
+            .expect("BanEx não encontrada");
+        assert_eq!(sym.kind, SymbolKind::Native);
+        assert_eq!(sym.params.len(), 2);
+        assert_eq!(sym.params[0].name, "playerid");
+        assert_eq!(sym.params[1].name, "reason");
+    }
+
+    #[test]
+    fn parses_multiline_forward() {
+        let src = "forward OnPlayerBanned(\n    playerid,\n    Float:duration\n);";
+        let f = parse_file(src);
+        let sym = f
+            .symbols
+            .iter()
+            .find(|s| s.name == "OnPlayerBanned")
+            .expect("OnPlayerBanned não encontrada");
+        assert_eq!(sym.kind, SymbolKind::Forward);
+        assert_eq!(sym.params[1].tag.as_deref(), Some("Float"));
+    }
+
+    #[test]
+    fn multiline_native_keeps_doc_and_deprecation() {
+        let src = "/**\n * Bane com motivo.\n *\n * @param playerid  o jogador\n */\n#pragma deprecated Use BanPlayerFor\nnative BanEx(\n    playerid,\n    const reason[]\n);";
+        let f = parse_file(src);
+        let sym = f.symbols.iter().find(|s| s.name == "BanEx").unwrap();
+        assert!(sym.deprecated);
+        assert_eq!(sym.deprecated_message.as_deref(), Some("Use BanPlayerFor"));
+        assert!(
+            sym.doc
+                .as_deref()
+                .is_some_and(|d| d.contains("@param playerid")),
+            "doc: {:?}",
+            sym.doc
+        );
+    }
+
+    #[test]
+    fn multiline_native_with_tagged_return() {
+        let src = "native bool:IsActorStreamedIn(\n    actorid,\n    playerid\n);";
+        let f = parse_file(src);
+        assert!(
+            f.symbols.iter().any(|s| s.name == "IsActorStreamedIn"),
+            "{:?}",
+            f.symbols.iter().map(|s| &s.name).collect::<Vec<_>>()
         );
     }
 
