@@ -13,7 +13,7 @@ caso encontre por favor relate para ajudar a manter a consistência dos dados.
 
 ---
 
-## [1.4.0] - 30/08/2026
+## [1.4.0] - 01/09/2026
 
 ### Adicionado
 - **Comentários de documentação nos hovers, signature help e autocomplete** — o
