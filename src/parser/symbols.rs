@@ -1,7 +1,9 @@
 use regex::Regex;
 
 use super::{
-    lexer::{pragma_deprecated_message, strip_line_comments, update_brace_depth},
+    lexer::{
+        is_pragma_deprecated, pragma_deprecated_message, strip_line_comments, update_brace_depth,
+    },
     types::{Deprecation, IncludeDirective, Param, ParsedFile, Symbol, SymbolKind},
 };
 use crate::util::to_u32;
@@ -245,7 +247,10 @@ fn parse_params(raw: &str) -> Vec<Param> {
 }
 
 fn extract_doc(lines: &[&str], line_idx: usize) -> Option<String> {
-    let mut doc_lines = Vec::new();
+    // Guarda as fatias e só materializa a `String` no fim: um bloco de doc tem
+    // várias linhas, e uma alocação por linha aparece no perfil de um include
+    // grande.
+    let mut doc_lines: Vec<&str> = Vec::new();
     let mut found = false;
     // Caminha para cima a partir da linha anterior. Índices em `usize` com
     // decremento via `checked_sub` evitam o uso de `isize` (e os casts que ele
@@ -262,20 +267,20 @@ fn extract_doc(lines: &[&str], line_idx: usize) -> Option<String> {
         }
         // `#pragma deprecated` fica entre o comentário e a declaração; pular a
         // diretiva mantém o doc ligado ao símbolo que ela marca.
-        if pragma_deprecated_message(l).is_some() && !found {
+        if is_pragma_deprecated(l) && !found {
             i = idx.checked_sub(1);
             continue;
         }
         if l.starts_with("//") {
-            doc_lines.push(l.to_string());
+            doc_lines.push(l);
             found = true;
         } else if l.ends_with("*/") {
-            doc_lines.push(l.to_string());
+            doc_lines.push(l);
             // busca o início do bloco
             let mut j = idx.checked_sub(1);
             while let Some(jdx) = j {
                 let ll = lines[jdx].trim();
-                doc_lines.push(ll.to_string());
+                doc_lines.push(ll);
                 if ll.contains("/*") {
                     break;
                 }
@@ -507,8 +512,10 @@ impl ParserState {
     /// ao antigo `continue`); ao final, a profundidade de chaves é atualizada.
     fn process_line(&mut self, raw_line: &str, line_idx: usize, raw_lines: &[&str]) {
         // `#pragma deprecated` marca o próximo símbolo declarado; a mensagem
-        // que a segue é repassada no aviso de uso.
-        if let Some(m) = pragma_deprecated_message(raw_line) {
+        // que a segue é repassada no aviso de uso. O teste barato vem primeiro:
+        // extrair a mensagem aloca, e a diretiva é rara em meio ao arquivo.
+        if is_pragma_deprecated(raw_line) {
+            let m = pragma_deprecated_message(raw_line).unwrap_or_default();
             self.pending_deprecated = Deprecation::marked((!m.is_empty()).then_some(m));
             let stripped = strip_line_comments(raw_line, self.in_block);
             self.in_block = stripped.in_block;

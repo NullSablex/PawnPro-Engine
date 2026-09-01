@@ -35,7 +35,23 @@ pub fn decode_bytes(bytes: &[u8]) -> String {
 ///
 /// Devolve a mensagem (vazia quando a diretiva não traz uma).
 pub fn pragma_deprecated_message(raw_line: &str) -> Option<String> {
-    let t = raw_line.trim();
+    let rest = pragma_deprecated_rest(raw_line)?;
+    // Um comentário na mesma linha não faz parte da mensagem.
+    let msg = strip_line_comments(rest, false).text;
+    Some(msg.trim().to_string())
+}
+
+/// `true` se a linha é a diretiva, sem montar a mensagem.
+///
+/// `extract_doc` chama isto por linha ao caminhar para cima; extrair a mensagem
+/// ali alocaria uma `String` por linha inspecionada, só para descartá-la.
+pub fn is_pragma_deprecated(raw_line: &str) -> bool {
+    pragma_deprecated_rest(raw_line).is_some()
+}
+
+/// Reconhece a diretiva e devolve o trecho após `deprecated`, ainda cru.
+fn pragma_deprecated_rest(raw_line: &str) -> Option<&str> {
+    let t = raw_line.trim_start();
     let rest = t.strip_prefix('#')?.trim_start();
     let rest = rest.strip_prefix("pragma")?;
     // Exige separador: `#pragmadeprecated` não é a diretiva.
@@ -46,9 +62,7 @@ pub fn pragma_deprecated_message(raw_line: &str) -> Option<String> {
     if !rest.is_empty() && !rest.starts_with(|c: char| c.is_whitespace()) {
         return None;
     }
-    // Um comentário na mesma linha não faz parte da mensagem.
-    let msg = strip_line_comments(rest, false).text;
-    Some(msg.trim().to_string())
+    Some(rest)
 }
 
 #[derive(Debug)]
