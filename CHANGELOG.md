@@ -81,6 +81,18 @@ caso encontre por favor relate para ajudar a manter a consistência dos dados.
   dependência, reduzindo o ruído de manutenção
 
 ### Corrigido
+- **`native`/`forward` com assinatura quebrada em várias linhas eram ignorados** —
+  ao fechar o `)`, o parser só criava o símbolo se a linha trouxesse `{`; sem
+  isso, ficava esperando um corpo que nunca chega, já que essas duas formas
+  declaram sem corpo e terminam em `;`. O símbolo se perdia: sem hover, sem
+  autocomplete e sem signature help. Atinge em cheio os includes do open.mp,
+  onde assinaturas longas em várias linhas são comuns — um
+  `ApplyActorAnimation`, com nove parâmetros em nove linhas, era invisível para
+  a engine
+- **Comentário de documentação perdido quando `#pragma deprecated` ficava entre
+  ele e a declaração** — a varredura do doc caminha para cima e parava na
+  primeira linha que não fosse comentário, e a diretiva cortava o caminho. Passa
+  a pular a diretiva
 - **CodeQL: análise ausente em PRs de docs e dependências** — o repositório usava
   o *default setup* do CodeQL, que só analisa um pull request quando ele toca
   arquivos das linguagens configuradas. Um PR que mexia apenas em documentação ou
