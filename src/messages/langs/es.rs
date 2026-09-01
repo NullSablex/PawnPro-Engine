@@ -20,8 +20,11 @@ pub fn get(key: MsgKey) -> &'static str {
         }
         MsgKey::VarUnused => "variable \"{}\" declarada pero nunca usada",
         MsgKey::StockUnused => "función stock \"{}\" declarada pero nunca usada",
-        MsgKey::SymDeprecated => "\"{}\" está marcado como obsoleto",
+        MsgKey::SymDeprecated => "\"{}\" está obsoleto",
         MsgKey::SymDeprecatedUsage => "\"{}\" está obsoleto",
+        MsgKey::PragmaUnknown => "`#pragma {}` no existe",
+        MsgKey::PragmaUnknownDidYouMean => "`#pragma {}` no existe — usa `{sug}`",
+        MsgKey::PragmaDeprecatedQuoted => "El mensaje no lleva comillas — quedarían en el texto",
         MsgKey::SymFromDeprecatedFile => "\"{}\" pertenece a un include obsoleto",
         MsgKey::IncludeDeprecated => "\"{}\" está obsoleto",
         MsgKey::ParamUnused => "Parámetro \"{}\" declarado pero nunca usado",

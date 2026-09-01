@@ -36,6 +36,23 @@ caso encontre por favor relate para ajudar a manter a consistência dos dados.
   marcação continua virando a descrição, como antes
 - **Tags de documentação no autocomplete** — o trigger `@`, dentro de um
   comentário, passa a oferecer `@param`, `@return` e `@remarks` com snippets
+- **Padrão próprio no estilo de nomenclatura** — um item da lista de estilos
+  aceitos escrito entre barras (`/^g_[a-z][a-zA-Z0-9]*$/`) passa a ser lido como
+  expressão regular, para convenções que os cinco estilos embutidos não descrevem
+  — prefixo de global, notação húngara. Convive com eles pela regra que já valia:
+  o nome é aceito se casar com **qualquer** critério da categoria.
+
+  O padrão é âncorado como `^(?:…)$` — descreve o nome inteiro, e o agrupamento
+  impede que uma alternância no topo ancore só os extremos. O `_` inicial **não**
+  é removido antes da comparação, ao contrário dos estilos embutidos: quem
+  escreve o padrão decide se o aceita. Um padrão inválido é ignorado sem derrubar
+  a análise nem os demais critérios da categoria.
+
+  Não gera sugestão de renomeação: de um regex arbitrário dá para saber se o nome
+  passa, não como reescrevê-lo. Por isso o critério é um tipo próprio (`Rule`) em
+  vez de uma variante de `Case`, que alimenta o gerador de nomes. A crate `regex`
+  tem tempo de execução linear garantido, então um padrão custoso não degrada a
+  análise
 - **Diagnósticos e hovers traduzidos para Espanhol, Romeno e Russo** — as tabelas
   de mensagens `messages/langs/{es,ro,ru}.rs` existiam como esqueleto (texto ainda
   em inglês, copiado de `en.rs`) e agora estão de fato traduzidas: as 75 mensagens
@@ -80,7 +97,69 @@ caso encontre por favor relate para ajudar a manter a consistência dos dados.
   por ecossistema (cargo, GitHub Actions, pip) em vez de abrir um PR por
   dependência, reduzindo o ruído de manutenção
 
+- **Autocomplete ordenado pela proximidade do cursor** — a lista vinha ordenada
+  de um jeito que punha as variáveis locais e os parâmetros **abaixo** de
+  milhares de nativas dos includes; o que está mais perto de quem escreve
+  aparecia por último. A ordem passa a ser: locais e parâmetros, símbolos do
+  próprio arquivo, símbolos dos includes, palavras-chave e, por fim, os
+  marcados com `#pragma deprecated` — que continuam aparecendo (às vezes é
+  mesmo o que se quer), mas nunca à frente de uma alternativa viva. Dentro de
+  cada grupo a ordem é alfabética sem diferenciar maiúsculas
+- **Listas grandes de completion não travam mais a digitação** — um projeto com
+  muitos includes mandava todos os símbolos ao editor a cada tecla. A resposta
+  passa a ser cortada em 1000 itens e marcada como `isIncomplete`, fazendo o
+  editor pedir de novo conforme o prefixo cresce. O corte vem depois da
+  ordenação, então o que se perde são os itens mais distantes do cursor
+- **Correções rápidas para mais nove diagnósticos** — passam a ter *quick fix*:
+  remover o corpo `{ }` ilegal de um `native`/`forward` (`PP0002`/`PP0003`);
+  dar corpo vazio ou converter em `forward` quando falta o corpo (`PP0004`);
+  trocar por um símbolo de nome parecido quando a função chamada não existe
+  (`PP0010`, o caso comum de erro de digitação); remover o `#define` e o
+  `#include` não utilizados (`PP0011`/`PP0012`); e reindentar a linha
+  (`PP0017`), usando o estilo de formatação configurado no projeto, não uma
+  indentação fixa. Somados aos que já existiam, catorze dos dezenove
+  diagnósticos agora oferecem correção
+- **`PP0019` — `#pragma` desconhecido ou malformado** — o compilador rejeita uma
+  diretiva que não conhece (erro 207), mas só na compilação; agora o aviso
+  aparece enquanto se escreve, com *quick fix*. Cobre o nome errado
+  (`#pragma deprected` → sugere `deprecated`, comparando com a lista do
+  compilador) e a mensagem de `deprecated` escrita entre aspas — a diretiva toma
+  o resto da linha como texto livre, então as aspas entrariam na mensagem em vez
+  de delimitá-la. Aspas no meio do texto continuam sendo texto legítimo
+
 ### Corrigido
+- **Comentário de outra parte do arquivo aparecendo no hover** — a varredura do
+  doc comment subia o arquivo acumulando linhas, e acabava trazendo réguas,
+  cabeçalhos de seção e o texto de outras funções para o hover do símbolo
+  abaixo. Passa a valer a mesma regra do Javadoc e do PHPDoc: **só o bloco
+  imediatamente acima da declaração** — um `/* … */` colado nela, ou uma
+  sequência contígua de linhas `//`. Uma linha em branco, ou qualquer código
+  entre os dois, separa. Entre o comentário e a declaração continua podendo
+  haver o `#pragma deprecated` que marca o símbolo
+- **Doc comment de um símbolo aparecendo no hover de outro** — quando o
+  comentário era um bloco de uma linha só (`/** … */`), a varredura empurrava
+  essa linha e ia procurar o `/*` de abertura **a partir da linha anterior**,
+  atravessando o código acima até casar com o `/**` de outro comentário. O
+  hover de um `#define`, por exemplo, mostrava a documentação da função
+  anterior com o código do meio junto. Um `*/` sem abertura também deixa de
+  virar doc, em vez de arrastar o arquivo até o topo
+- **Aviso de depreciado desalinhando o hover** — era escrito como *blockquote*
+  (`>`), o que fazia o editor recuar o bloco e ler a linha `---` seguinte como
+  continuação dele, desalinhando a documentação inteira. Passa a ser texto
+  normal — e agora traz junto a mensagem do `#pragma deprecated`, que antes só
+  aparecia no aviso de uso
+- **`native`/`forward` com assinatura quebrada em várias linhas eram ignorados** —
+  ao fechar o `)`, o parser só criava o símbolo se a linha trouxesse `{`; sem
+  isso, ficava esperando um corpo que nunca chega, já que essas duas formas
+  declaram sem corpo e terminam em `;`. O símbolo se perdia: sem hover, sem
+  autocomplete e sem signature help. Atinge em cheio os includes do open.mp,
+  onde assinaturas longas em várias linhas são comuns — um
+  `ApplyActorAnimation`, com nove parâmetros em nove linhas, era invisível para
+  a engine
+- **Comentário de documentação perdido quando `#pragma deprecated` ficava entre
+  ele e a declaração** — a varredura do doc caminha para cima e parava na
+  primeira linha que não fosse comentário, e a diretiva cortava o caminho. Passa
+  a pular a diretiva
 - **CodeQL: análise ausente em PRs de docs e dependências** — o repositório usava
   o *default setup* do CodeQL, que só analisa um pull request quando ele toca
   arquivos das linguagens configuradas. Um PR que mexia apenas em documentação ou

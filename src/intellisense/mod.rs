@@ -13,12 +13,12 @@ mod semantic_tokens;
 mod signature;
 
 pub use codelens::get_code_lens;
-pub use completion::{get_at_completions, get_completions};
+pub use completion::{MAX_COMPLETION_ITEMS, get_at_completions, get_completions};
 pub use docs::{DocLabels, parse_doc};
 pub use format_style::{BracePlacement, FormatStyle, Preset};
 pub use formatter::{format_document, format_range};
 pub use hover::get_hover;
-pub use quickfix::{removal_kind, removal_range};
+pub use quickfix::{RemovalKind, removal_kind, removal_range};
 pub use references::get_references;
 pub use rename::{get_rename, prepare_rename};
 pub use semantic_tokens::{get_semantic_tokens, semantic_tokens_legend};
@@ -56,6 +56,23 @@ pub(crate) fn extract_word(line: &str, col: usize) -> Option<String> {
         return None;
     }
     Some(chars[start..end].iter().collect())
+}
+
+/// O símbolo conhecido mais parecido com `name`, para sugerir em PP0010.
+///
+/// Considera os símbolos do arquivo e de todos os includes transitivos — é o
+/// mesmo universo que o autocomplete oferece, então a sugestão nunca aponta
+/// para algo que o arquivo não enxerga.
+pub fn suggest_symbol(
+    state: &WorkspaceState,
+    file_path: &Path,
+    inc_paths: &[PathBuf],
+    parsed: &ParsedFile,
+    name: &str,
+) -> Option<String> {
+    let all = collect_all_symbols(state, file_path, inc_paths, parsed);
+    let names: Vec<&str> = all.iter().map(|s| s.name.as_str()).collect();
+    crate::similar::closest(name, names).map(str::to_string)
 }
 
 pub(crate) fn collect_all_symbols(

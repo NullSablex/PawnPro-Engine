@@ -8,6 +8,7 @@
   [![Clippy](https://img.shields.io/github/actions/workflow/status/NullSablex/PawnPro-Engine/ci.yml?style=flat-square&label=Clippy&logo=rust)](https://github.com/NullSablex/PawnPro-Engine/actions/workflows/ci.yml)
   [![Security Audit](https://img.shields.io/github/actions/workflow/status/NullSablex/PawnPro-Engine/ci.yml?style=flat-square&label=Security%20Audit&logo=rust)](https://github.com/NullSablex/PawnPro-Engine/actions/workflows/ci.yml)
   [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/NullSablex/PawnPro-Engine/badge?style=flat-square)](https://scorecard.dev/viewer/?uri=github.com/NullSablex/PawnPro-Engine)
+  [![Stars](https://img.shields.io/github/stars/NullSablex/PawnPro-Engine?style=flat-square&logo=github&label=stars)](https://github.com/NullSablex/PawnPro-Engine/stargazers)
   [![License](https://img.shields.io/badge/licença-Source--Available-blue?style=flat-square)](LICENSE.md)
 
   ![Windows x64](https://img.shields.io/badge/Windows-x64-0078D4?style=flat-square&logo=windows11&logoColor=white)
@@ -15,17 +16,19 @@
   ![macOS x64 · arm64](https://img.shields.io/badge/macOS-x64%20·%20arm64-000000?style=flat-square&logo=apple&logoColor=white)
 </div>
 
-Motor IntelliSense para a linguagem **Pawn** — servidor LSP em Rust integrado à extensão [PawnPro](https://github.com/NullSablex/PawnPro) para Visual Studio Code.
+Motor de análise para a linguagem **Pawn** (SA-MP / open.mp) — um servidor LSP escrito em Rust, que dá à extensão [PawnPro](https://github.com/NullSablex/PawnPro) o IntelliSense e os diagnósticos.
 
 ## O que é
 
-`pawnpro-engine` é o núcleo de análise do PawnPro. Roda como processo separado e se comunica com o editor via **Language Server Protocol (LSP)** sobre stdin/stdout — o mesmo protocolo usado por `rust-analyzer` e `clangd`.
+`pawnpro-engine` é o núcleo de análise do PawnPro. Roda como **processo separado** e conversa com o editor pelo **Language Server Protocol** sobre stdin/stdout — o mesmo protocolo do `rust-analyzer` e do `clangd`.
 
-A extensão PawnPro inicia o motor automaticamente ao detectar o binário. Se o binário não estiver presente, a extensão recua para o modo TypeScript como fallback transparente.
+Estar fora do processo do editor é o que permite analisar um gamemode inteiro, com todos os seus includes transitivos, sem travar a digitação. Não é realce por expressão regular: o código é tokenizado e analisado de verdade, e é daí que vêm a resolução de símbolos entre arquivos, a contagem de referências e os diagnósticos com posição exata.
+
+A extensão inicia o motor automaticamente quando encontra o binário; ele acompanha a instalação e não exige Rust nem nada instalado à parte.
 
 ## Capacidades
 
-- **Diagnósticos** — 17 códigos `PP####` cobrindo erros de estrutura, código morto, símbolos não declarados, depreciação e indentação (ver [docs/diagnostics.md](docs/diagnostics.md)).
+- **Diagnósticos** — 19 códigos `PP####` cobrindo erros de estrutura, código morto, símbolos não declarados, depreciação, indentação, nomenclatura e `#pragma` malformado; 13 deles com correção automática (ver [docs/diagnostics.md](docs/diagnostics.md)).
 - **Completions** — símbolos de todos os includes transitivos com snippets de parâmetros; itens depreciados marcados.
 - **Hover** — assinatura e comentário de documentação formatado (Javadoc `@param` e XMLdoc `<summary>`, o formato do `omp-stdlib`); em `#include` mostra o caminho resolvido.
 - **Signature Help** — parâmetro ativo destacado ao digitar `(` e `,`.
@@ -33,6 +36,8 @@ A extensão PawnPro inicia o motor automaticamente ao detectar o binário. Se o 
 - **References** — `textDocument/references` (Shift+F12).
 - **Semantic Tokens** — coloração semântica com suporte a chamadas multiline.
 - **Formatação** — documento inteiro e seleção de intervalo.
+- **Assistente de nomenclatura** — convenções de caixa por categoria, com padrão próprio por expressão regular para o que os estilos prontos não descrevem.
+- **Code actions** — correção automática para 13 dos diagnósticos.
 - **Invalidação granular** — ao salvar um include, o motor republica automaticamente os diagnósticos de todos os arquivos abertos que dependem dele, transitivamente.
 
 Para detalhes do protocolo e das opções de configuração, consulte [docs/lsp.md](docs/lsp.md).

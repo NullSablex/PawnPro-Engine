@@ -18,6 +18,12 @@ pub enum RemovalKind {
     Function,
     /// Parâmetro: apenas o identificador dentro da lista (sem mexer em chamadas).
     Parameter,
+    /// Diretiva de uma linha (`#define`, `#include`): a linha inteira. Uma
+    /// continuação com `\` no fim arrasta as linhas seguintes.
+    Directive,
+    /// Corpo `{ … }` de um `native`/`forward`, que o compilador não aceita:
+    /// remove do `{` ao `}`, deixando a declaração terminada em `;`.
+    IllegalBody,
 }
 
 /// Mapeia um código de diagnóstico para o tipo de remoção, ou `None` se o código
@@ -28,6 +34,8 @@ pub fn removal_kind(code: &str) -> Option<RemovalKind> {
         "PP0005" => Some(RemovalKind::Variable),
         "PP0006" | "PP0016" => Some(RemovalKind::Function),
         "PP0009" => Some(RemovalKind::Parameter),
+        "PP0011" | "PP0012" => Some(RemovalKind::Directive),
+        "PP0002" | "PP0003" => Some(RemovalKind::IllegalBody),
         _ => None,
     }
 }
@@ -43,7 +51,75 @@ pub fn removal_range(text: &str, line: u32, col: u32, kind: RemovalKind) -> Opti
         RemovalKind::Variable => variable_range(cur, line),
         RemovalKind::Function => function_range(&lines, line),
         RemovalKind::Parameter => parameter_range(cur, line, col),
+        RemovalKind::Directive => directive_range(&lines, line),
+        RemovalKind::IllegalBody => illegal_body_range(&lines, line),
     }
+}
+
+/// Corpo ilegal de `native`/`forward`: do `{` até o `}` que o fecha. O `{` pode
+/// estar na própria linha da declaração ou na seguinte.
+///
+/// Devolve `None` se as chaves não fecharem no arquivo — melhor não oferecer o
+/// fix do que apagar até o fim.
+fn illegal_body_range(lines: &[&str], line: u32) -> Option<Range> {
+    let decl = line as usize;
+    // Acha a linha e a coluna do `{` de abertura (declaração ou a seguinte).
+    let (open_line, open_col) =
+        (decl..=decl + 1).find_map(|i| lines.get(i).and_then(|l| l.find('{').map(|c| (i, c))))?;
+
+    let mut depth = 0i32;
+    for (i, l) in lines.iter().enumerate().skip(open_line) {
+        let from = if i == open_line { open_col } else { 0 };
+        for (c, ch) in l.char_indices().skip_while(|(c, _)| *c < from) {
+            match ch {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(Range {
+                            start: Position {
+                                line: to_u32(open_line),
+                                character: to_u32(open_col),
+                            },
+                            end: Position {
+                                line: to_u32(i),
+                                character: to_u32(c + 1),
+                            },
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    None
+}
+
+/// Diretiva: a linha inteira, mais as seguintes enquanto a anterior terminar em
+/// `\` (continuação de macro). Só age quando a linha começa mesmo com `#`.
+fn directive_range(lines: &[&str], line: u32) -> Option<Range> {
+    let start = line as usize;
+    if !lines.get(start)?.trim_start().starts_with('#') {
+        return None;
+    }
+    let mut end = start;
+    while lines.get(end).is_some_and(|l| l.trim_end().ends_with('\\')) {
+        // Uma continuação sem linha seguinte não existe; parar evita estourar.
+        if end + 1 >= lines.len() {
+            break;
+        }
+        end += 1;
+    }
+    Some(Range {
+        start: Position {
+            line: to_u32(start),
+            character: 0,
+        },
+        end: Position {
+            line: to_u32(end + 1),
+            character: 0,
+        },
+    })
 }
 
 /// Variável: remove a linha inteira da declaração se ela contém só essa
@@ -186,6 +262,57 @@ fn strip_for_braces(line: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn directive_removes_the_whole_line() {
+        let src = "#define MAX 10\nmain() {}\n";
+        let r = removal_range(src, 0, 8, RemovalKind::Directive).unwrap();
+        assert_eq!(r.start.line, 0);
+        assert_eq!(r.end.line, 1);
+        assert_eq!(r.end.character, 0);
+    }
+
+    #[test]
+    fn directive_follows_backslash_continuations() {
+        let src = "#define LONGA(%0) \\\n    foo(%0) \\\n    bar(%0)\nmain() {}\n";
+        let r = removal_range(src, 0, 8, RemovalKind::Directive).unwrap();
+        assert_eq!(r.end.line, 3, "deve arrastar as continuações");
+    }
+
+    #[test]
+    fn directive_ignores_a_line_that_is_not_a_directive() {
+        assert!(removal_range("new x;\n", 0, 4, RemovalKind::Directive).is_none());
+    }
+
+    #[test]
+    fn illegal_body_on_the_same_line() {
+        let src = "native Foo() { return 1; }\n";
+        let r = removal_range(src, 0, 7, RemovalKind::IllegalBody).unwrap();
+        assert_eq!((r.start.line, r.start.character), (0, 13));
+        assert_eq!((r.end.line, r.end.character), (0, 26));
+    }
+
+    #[test]
+    fn illegal_body_with_the_brace_on_the_next_line() {
+        let src = "forward Foo()\n{\n    return 1;\n}\n";
+        let r = removal_range(src, 0, 8, RemovalKind::IllegalBody).unwrap();
+        assert_eq!(r.start.line, 1);
+        assert_eq!((r.end.line, r.end.character), (3, 1));
+    }
+
+    #[test]
+    fn illegal_body_handles_nested_braces() {
+        let src = "native Foo() { if (a) { b(); } }\n";
+        let r = removal_range(src, 0, 7, RemovalKind::IllegalBody).unwrap();
+        assert_eq!((r.end.line, r.end.character), (0, 32));
+    }
+
+    #[test]
+    fn illegal_body_unbalanced_gives_no_fix() {
+        // Sem `}` que feche: melhor não oferecer o fix do que apagar até o fim.
+        let src = "native Foo() {\n    return 1;\n";
+        assert!(removal_range(src, 0, 7, RemovalKind::IllegalBody).is_none());
+    }
     use super::*;
 
     #[test]

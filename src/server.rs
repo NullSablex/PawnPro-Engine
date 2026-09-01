@@ -8,14 +8,14 @@ use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::{
     CodeAction, CodeActionKind, CodeActionOrCommand, CodeActionParams,
     CodeActionProviderCapability, CodeActionResponse, CodeLens, CodeLensOptions, CodeLensParams,
-    CompletionItem, CompletionOptions, CompletionParams, CompletionResponse, Diagnostic,
-    DiagnosticSeverity, DiagnosticTag, DidChangeConfigurationParams, DidChangeTextDocumentParams,
-    DidChangeWatchedFilesParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
-    DidSaveTextDocumentParams, DocumentFormattingParams, DocumentRangeFormattingParams, Hover,
-    HoverParams, HoverProviderCapability, InitializeParams, InitializeResult, InitializedParams,
-    Location, MessageType, NumberOrString, OneOf, Position, PrepareRenameResponse, Range,
-    ReferenceParams, RenameOptions, RenameParams, SaveOptions, SemanticTokensFullOptions,
-    SemanticTokensOptions, SemanticTokensParams, SemanticTokensResult,
+    CompletionItem, CompletionList, CompletionOptions, CompletionParams, CompletionResponse,
+    Diagnostic, DiagnosticSeverity, DiagnosticTag, DidChangeConfigurationParams,
+    DidChangeTextDocumentParams, DidChangeWatchedFilesParams, DidCloseTextDocumentParams,
+    DidOpenTextDocumentParams, DidSaveTextDocumentParams, DocumentFormattingParams,
+    DocumentRangeFormattingParams, Hover, HoverParams, HoverProviderCapability, InitializeParams,
+    InitializeResult, InitializedParams, Location, MessageType, NumberOrString, OneOf, Position,
+    PrepareRenameResponse, Range, ReferenceParams, RenameOptions, RenameParams, SaveOptions,
+    SemanticTokensFullOptions, SemanticTokensOptions, SemanticTokensParams, SemanticTokensResult,
     SemanticTokensServerCapabilities, ServerCapabilities, ServerInfo, SignatureHelp,
     SignatureHelpOptions, SignatureHelpParams, TextDocumentPositionParams,
     TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions,
@@ -26,6 +26,7 @@ use tower_lsp::{Client, LanguageServer};
 use crate::analyzer::diagnostic::Severity;
 use crate::intellisense;
 use crate::messages::Locale;
+use crate::util::to_u32;
 use crate::workspace::{WorkspaceState, uri_to_path};
 
 pub struct PawnProServer {
@@ -214,13 +215,24 @@ impl LanguageServer for PawnProServer {
         let position = params.text_document_position.position;
         let state = Arc::clone(&self.state);
 
-        let items = tokio::task::spawn_blocking(move || {
+        let mut items = tokio::task::spawn_blocking(move || {
             intellisense::get_completions(&state.blocking_read(), &uri_str, position)
         })
         .await
         .unwrap_or_default();
 
-        Ok((!items.is_empty()).then_some(CompletionResponse::Array(items)))
+        if items.is_empty() {
+            return Ok(None);
+        }
+        // Já vêm ordenados por proximidade do cursor, então o corte descarta os
+        // menos relevantes; `is_incomplete` faz o editor pedir de novo enquanto
+        // o prefixo cresce.
+        let is_incomplete = items.len() > intellisense::MAX_COMPLETION_ITEMS;
+        items.truncate(intellisense::MAX_COMPLETION_ITEMS);
+        Ok(Some(CompletionResponse::List(CompletionList {
+            is_incomplete,
+            items,
+        })))
     }
 
     async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
@@ -701,6 +713,10 @@ fn code_actions_for(
     };
     let mut actions: CodeActionResponse = Vec::new();
     naming_actions(state, uri, params, &text, &mut actions);
+    pragma_actions(uri, params, &text, &mut actions);
+    missing_body_actions(uri, params, &text, &mut actions);
+    undeclared_actions(state, uri, params, &text, &mut actions);
+    indent_actions(state, uri, params, &text, &mut actions);
     removal_actions(uri, params, &text, &mut actions);
     actions
 }
@@ -731,7 +747,7 @@ fn naming_actions(
                 continue;
             };
             actions.push(CodeActionOrCommand::CodeAction(CodeAction {
-                title: format!("Renomear \"{name}\" para \"{suggestion}\""),
+                title: format!("Renomear para \"{suggestion}\""),
                 kind: Some(CodeActionKind::QUICKFIX),
                 diagnostics: Some(vec![diag.clone()]),
                 edit: Some(edit),
@@ -739,6 +755,222 @@ fn naming_actions(
                 ..Default::default()
             }));
         }
+    }
+}
+
+/// Quick fixes das diretivas `#pragma` malformadas (PP0019): corrigir o nome
+/// da diretiva ou tirar as aspas da mensagem de `deprecated`.
+fn pragma_actions(
+    uri: &str,
+    params: &CodeActionParams,
+    text: &str,
+    actions: &mut CodeActionResponse,
+) {
+    use crate::analyzer::pragmas::{PragmaFix, collect_issues};
+
+    let diags = diagnostics_with_code(params, "PP0019");
+    if diags.is_empty() {
+        return;
+    }
+    let issues = collect_issues(text);
+    for diag in diags {
+        // Casa pela posição: um arquivo pode ter várias diretivas com problema.
+        let Some(issue) = issues
+            .iter()
+            .find(|i| i.line == diag.range.start.line && i.col == diag.range.start.character)
+        else {
+            continue;
+        };
+        let Some(fix) = &issue.fix else { continue };
+        let (title, new_text) = match fix {
+            PragmaFix::Rename(s) => (format!("Usar `#pragma {s}`"), s.clone()),
+            PragmaFix::Unquote(inner) => ("Remover as aspas".to_string(), inner.clone()),
+        };
+        let range = Range {
+            start: Position {
+                line: issue.line,
+                character: issue.col,
+            },
+            end: Position {
+                line: issue.line,
+                character: issue.col_end,
+            },
+        };
+        actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+            title,
+            kind: Some(CodeActionKind::QUICKFIX),
+            diagnostics: Some(vec![diag.clone()]),
+            edit: Some(replacement_edit(uri, range, new_text)),
+            is_preferred: Some(true),
+            ..Default::default()
+        }));
+    }
+}
+
+/// `WorkspaceEdit` que substitui `range` por `new_text` no arquivo `uri`.
+fn replacement_edit(uri: &str, range: Range, new_text: String) -> WorkspaceEdit {
+    let mut changes = std::collections::HashMap::new();
+    if let Ok(parsed) = uri.parse::<Url>() {
+        changes.insert(parsed, vec![TextEdit { range, new_text }]);
+    }
+    WorkspaceEdit {
+        changes: Some(changes),
+        ..Default::default()
+    }
+}
+
+/// Quick fixes do PP0004 (`public`/`stock` sem corpo): dar um corpo vazio, ou
+/// converter em `forward` — que é a forma de declarar sem corpo.
+fn missing_body_actions(
+    uri: &str,
+    params: &CodeActionParams,
+    text: &str,
+    actions: &mut CodeActionResponse,
+) {
+    let lines: Vec<&str> = text.lines().collect();
+    for diag in diagnostics_with_code(params, "PP0004") {
+        let idx = diag.range.start.line as usize;
+        let Some(cur) = lines.get(idx) else { continue };
+        let trimmed_end = cur.trim_end();
+        // Só age na forma canônica `… );` — variações ficam para o usuário.
+        if !trimmed_end.ends_with(';') {
+            continue;
+        }
+        let semi = trimmed_end.len() - 1;
+        let line = diag.range.start.line;
+
+        // 1. Trocar o `;` por um corpo vazio.
+        actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+            title: "Adicionar corpo vazio".to_string(),
+            kind: Some(CodeActionKind::QUICKFIX),
+            diagnostics: Some(vec![diag.clone()]),
+            edit: Some(replacement_edit(
+                uri,
+                Range {
+                    start: Position {
+                        line,
+                        character: to_u32(semi),
+                    },
+                    end: Position {
+                        line,
+                        character: to_u32(trimmed_end.len()),
+                    },
+                },
+                "\n{\n}".to_string(),
+            )),
+            is_preferred: Some(true),
+            ..Default::default()
+        }));
+
+        // 2. Converter em `forward`, que declara sem corpo.
+        let t = cur.trim_start();
+        let indent = cur.len() - t.len();
+        if let Some(kw) = ["public ", "stock "].iter().find(|k| t.starts_with(**k)) {
+            actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+                title: format!("Converter `{}` em `forward`", kw.trim_end()),
+                kind: Some(CodeActionKind::QUICKFIX),
+                diagnostics: Some(vec![diag.clone()]),
+                edit: Some(replacement_edit(
+                    uri,
+                    Range {
+                        start: Position {
+                            line,
+                            character: to_u32(indent),
+                        },
+                        end: Position {
+                            line,
+                            character: to_u32(indent + kw.len()),
+                        },
+                    },
+                    "forward ".to_string(),
+                )),
+                ..Default::default()
+            }));
+        }
+    }
+}
+
+/// Quick fix do PP0010: trocar a chamada por um símbolo conhecido de nome
+/// parecido — o caso comum é um erro de digitação.
+fn undeclared_actions(
+    state: &crate::workspace::WorkspaceState,
+    uri: &str,
+    params: &CodeActionParams,
+    text: &str,
+    actions: &mut CodeActionResponse,
+) {
+    let diags = diagnostics_with_code(params, "PP0010");
+    if diags.is_empty() {
+        return;
+    }
+    let Some(file_path) = uri_to_path(uri) else {
+        return;
+    };
+    let Some(parsed) = state.get_parsed(uri) else {
+        return;
+    };
+    let inc_paths = state.include_paths();
+
+    for diag in diags {
+        let Some(name) = crate::text::word_at(text, diag.range.start) else {
+            continue;
+        };
+        let Some(suggestion) =
+            intellisense::suggest_symbol(state, &file_path, &inc_paths, &parsed, &name)
+        else {
+            continue;
+        };
+        actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+            title: format!("Trocar por \"{suggestion}\""),
+            kind: Some(CodeActionKind::QUICKFIX),
+            diagnostics: Some(vec![diag.clone()]),
+            edit: Some(replacement_edit(uri, diag.range, suggestion)),
+            is_preferred: Some(true),
+            ..Default::default()
+        }));
+    }
+}
+
+/// Quick fix do PP0017: reindenta a linha usando o formatador, com o estilo
+/// configurado no workspace — não uma indentação inventada aqui.
+fn indent_actions(
+    state: &crate::workspace::WorkspaceState,
+    uri: &str,
+    params: &CodeActionParams,
+    text: &str,
+    actions: &mut CodeActionResponse,
+) {
+    for diag in diagnostics_with_code(params, "PP0017") {
+        let line = diag.range.start.line;
+        let range = Range {
+            start: Position { line, character: 0 },
+            end: Position {
+                line: line + 1,
+                character: 0,
+            },
+        };
+        // `format_range` aplica o preset e os overrides do workspace; o
+        // `#pragma tabsize` do projeto já está refletido em `state.format_style`.
+        let edits = intellisense::format_range(text, range, state.format_style);
+        if edits.is_empty() {
+            continue;
+        }
+        let mut changes = std::collections::HashMap::new();
+        let Ok(parsed) = uri.parse::<Url>() else {
+            continue;
+        };
+        changes.insert(parsed, edits);
+        actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+            title: "Corrigir a indentação".to_string(),
+            kind: Some(CodeActionKind::QUICKFIX),
+            diagnostics: Some(vec![diag.clone()]),
+            edit: Some(WorkspaceEdit {
+                changes: Some(changes),
+                ..Default::default()
+            }),
+            is_preferred: Some(true),
+            ..Default::default()
+        }));
     }
 }
 
@@ -751,9 +983,7 @@ fn removal_actions(
     text: &str,
     actions: &mut CodeActionResponse,
 ) {
-    if uri.to_ascii_lowercase().ends_with(".inc") {
-        return;
-    }
+    let is_inc = uri.to_ascii_lowercase().ends_with(".inc");
     for diag in &params.context.diagnostics {
         let Some(NumberOrString::String(code)) = &diag.code else {
             continue;
@@ -761,6 +991,11 @@ fn removal_actions(
         let Some(kind) = intellisense::removal_kind(code) else {
             continue;
         };
+        // Em `.inc`, "não usado" é falso positivo (quem consome a include usa).
+        // Corpo ilegal, porém, é erro de sintaxe em qualquer arquivo.
+        if is_inc && kind != intellisense::RemovalKind::IllegalBody {
+            continue;
+        }
         let line = diag.range.start.line;
         let col = diag.range.start.character;
         let Some(range) = intellisense::removal_range(text, line, col, kind) else {
@@ -811,6 +1046,9 @@ fn removal_title(code: &str) -> String {
     match code {
         "PP0009" => "Remover parâmetro não usado".to_string(),
         "PP0005" => "Remover variável não usada".to_string(),
+        "PP0011" => "Remover #define não usado".to_string(),
+        "PP0012" => "Remover #include não usado".to_string(),
+        "PP0002" | "PP0003" => "Remover o corpo".to_string(),
         _ => "Remover declaração não usada".to_string(),
     }
 }

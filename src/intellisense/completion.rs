@@ -298,7 +298,7 @@ fn kw_to_item(kw: &KwSnippet, locale: Locale) -> CompletionItem {
         } else {
             InsertTextFormat::PLAIN_TEXT
         }),
-        sort_text: Some(format!("9_{}", kw.label)),
+        sort_text: Some(Rank::Keyword.sort_text(kw.label)),
         ..Default::default()
     }
 }
@@ -480,11 +480,21 @@ pub fn get_completions(
     let mut items: Vec<CompletionItem> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
 
+    // Os símbolos do próprio arquivo vêm primeiro em `all_syms`; conhecê-los
+    // por nome permite ranquear o resto como vindo de include.
+    let own: HashSet<&str> = parsed.symbols.iter().map(|s| s.name.as_str()).collect();
     for sym in &all_syms {
         if !seen.insert(sym.name.clone()) {
             continue;
         }
-        items.push(build_symbol_item(sym));
+        let rank = if sym.deprecated {
+            Rank::Deprecated
+        } else if own.contains(sym.name.as_str()) {
+            Rank::File
+        } else {
+            Rank::Included
+        };
+        items.push(build_symbol_item(sym, rank));
     }
 
     if let Some(text) = state.get_text(uri) {
@@ -503,7 +513,7 @@ pub fn get_completions(
                     detail: Some(msg(locale, MsgKey::KwLocal).to_string()),
                     insert_text: Some(name.clone()),
                     insert_text_format: Some(InsertTextFormat::PLAIN_TEXT),
-                    sort_text: Some(format!("1_{name}")),
+                    sort_text: Some(Rank::Local.sort_text(name)),
                     ..Default::default()
                 });
             }
@@ -521,10 +531,59 @@ pub fn get_completions(
         }
     }
 
+    // Ordena aqui (e não só via `sort_text`) para que o corte abaixo mantenha os
+    // itens mais próximos do cursor, e não os primeiros a serem coletados.
+    items.sort_by(|a, b| a.sort_text.cmp(&b.sort_text));
     items
 }
 
-fn build_symbol_item(sym: &crate::parser::types::Symbol) -> CompletionItem {
+/// Teto de itens devolvidos por chamada.
+///
+/// Um projeto com muitos includes chega a milhares de símbolos, e mandá-los a
+/// cada tecla trava a digitação. Com o corte, a resposta é marcada como
+/// incompleta e o editor pede de novo conforme o prefixo cresce — que é o
+/// mecanismo do LSP para listas grandes.
+pub const MAX_COMPLETION_ITEMS: usize = 1000;
+
+/// Posição de um item na lista, do mais próximo do cursor ao mais distante.
+///
+/// O `sort_text` que o editor usa para ordenar começa por este dígito, então a
+/// ordem entre grupos é decidida aqui e não pelo alfabeto. Um símbolo
+/// descontinuado cai para `Deprecated`, seja qual for sua origem: aparece na
+/// lista (às vezes é mesmo o que se quer), mas nunca à frente de uma
+/// alternativa viva.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Rank {
+    /// Parâmetros e variáveis locais da função sob o cursor.
+    Local,
+    /// Símbolos declarados no próprio arquivo.
+    File,
+    /// Símbolos vindos dos includes.
+    Included,
+    /// Palavras-chave da linguagem.
+    Keyword,
+    /// Qualquer símbolo marcado com `#pragma deprecated`.
+    Deprecated,
+}
+
+impl Rank {
+    fn prefix(self) -> char {
+        match self {
+            Rank::Local => '0',
+            Rank::File => '1',
+            Rank::Included => '2',
+            Rank::Keyword => '3',
+            Rank::Deprecated => '9',
+        }
+    }
+
+    /// `sort_text` do item: o grupo decide primeiro, o nome desempata.
+    fn sort_text(self, label: &str) -> String {
+        format!("{}_{}", self.prefix(), label.to_ascii_lowercase())
+    }
+}
+
+fn build_symbol_item(sym: &crate::parser::types::Symbol, rank: Rank) -> CompletionItem {
     use crate::parser::types::SymbolKind::{
         Const, Define, Enum, Forward, Native, Plain, Public, Static, StaticConst, Stock, Variable,
     };
@@ -580,7 +639,7 @@ fn build_symbol_item(sym: &crate::parser::types::Symbol) -> CompletionItem {
             }),
         insert_text,
         insert_text_format,
-        sort_text: Some(format!("0_{}", sym.name)),
+        sort_text: Some(rank.sort_text(&sym.name)),
         ..Default::default()
     };
 
@@ -589,4 +648,86 @@ fn build_symbol_item(sym: &crate::parser::types::Symbol) -> CompletionItem {
     }
 
     item
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parser::types::{Symbol, SymbolKind};
+
+    fn sym(name: &str, deprecated: bool) -> Symbol {
+        Symbol {
+            name: name.to_string(),
+            kind: SymbolKind::Native,
+            signature: Some(format!("{name}()")),
+            params: vec![],
+            deprecated,
+            deprecated_message: None,
+            doc: None,
+            line: 0,
+            col: 0,
+        }
+    }
+
+    #[test]
+    fn rank_orders_from_the_cursor_outwards() {
+        let mut ranks = [
+            Rank::Deprecated,
+            Rank::Keyword,
+            Rank::Included,
+            Rank::File,
+            Rank::Local,
+        ];
+        ranks.sort_unstable();
+        assert_eq!(
+            ranks,
+            [
+                Rank::Local,
+                Rank::File,
+                Rank::Included,
+                Rank::Keyword,
+                Rank::Deprecated
+            ]
+        );
+    }
+
+    #[test]
+    fn sort_text_puts_locals_before_includes() {
+        // O que importa é a ordem entre grupos, não o alfabeto: uma local
+        // chamada "zz" ainda vence uma nativa chamada "aa".
+        let local = Rank::Local.sort_text("zz");
+        let included = Rank::Included.sort_text("aa");
+        assert!(local < included, "{local} deveria vir antes de {included}");
+    }
+
+    #[test]
+    fn deprecated_sinks_below_everything_else() {
+        let dep = Rank::Deprecated.sort_text("aaa");
+        for rank in [Rank::Local, Rank::File, Rank::Included, Rank::Keyword] {
+            let other = rank.sort_text("zzz");
+            assert!(other < dep, "{other} deveria vir antes de {dep}");
+        }
+    }
+
+    #[test]
+    fn sort_text_is_case_insensitive_within_a_group() {
+        // Sem normalizar a caixa, "Zebra" viria antes de "alfa" (ASCII).
+        let upper = Rank::Included.sort_text("Zebra");
+        let lower = Rank::Included.sort_text("alfa");
+        assert!(lower < upper);
+    }
+
+    #[test]
+    fn deprecated_symbol_is_ranked_and_tagged() {
+        let item = build_symbol_item(&sym("BanEx", true), Rank::Deprecated);
+        assert!(item.sort_text.unwrap().starts_with('9'));
+        assert_eq!(item.tags, Some(vec![CompletionItemTag::DEPRECATED]));
+    }
+
+    #[test]
+    fn live_symbol_keeps_its_group_and_has_no_tag() {
+        let item = build_symbol_item(&sym("BanPlayerFor", false), Rank::File);
+        assert!(item.sort_text.unwrap().starts_with('1'));
+        assert_eq!(item.tags, None);
+    }
 }

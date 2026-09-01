@@ -20,8 +20,11 @@ pub fn get(key: MsgKey) -> &'static str {
         }
         MsgKey::VarUnused => "variabila \"{}\" declarată dar niciodată folosită",
         MsgKey::StockUnused => "funcția stock \"{}\" declarată dar niciodată folosită",
-        MsgKey::SymDeprecated => "\"{}\" este marcat ca învechit",
+        MsgKey::SymDeprecated => "\"{}\" este învechit",
         MsgKey::SymDeprecatedUsage => "\"{}\" este învechit",
+        MsgKey::PragmaUnknown => "`#pragma {}` nu există",
+        MsgKey::PragmaUnknownDidYouMean => "`#pragma {}` nu există — folosește `{sug}`",
+        MsgKey::PragmaDeprecatedQuoted => "Mesajul nu ia ghilimele — ar ajunge în text",
         MsgKey::SymFromDeprecatedFile => "\"{}\" aparține unui include învechit",
         MsgKey::IncludeDeprecated => "\"{}\" este învechit",
         MsgKey::ParamUnused => "Parametrul \"{}\" declarat dar niciodată folosit",

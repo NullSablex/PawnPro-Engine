@@ -43,6 +43,9 @@ pub enum MsgKey {
     StockUnused,
     SymDeprecated,
     SymDeprecatedUsage,
+    PragmaUnknown,
+    PragmaUnknownDidYouMean,
+    PragmaDeprecatedQuoted,
     SymFromDeprecatedFile,
     IncludeDeprecated,
     ParamUnused,
@@ -143,6 +146,9 @@ mod tests {
         for loc in [Locale::PtBr, Locale::Es, Locale::Ru, Locale::Ro, Locale::En] {
             assert!(!msg(loc, MsgKey::HoverDeprecated).is_empty());
             assert!(!msg(loc, MsgKey::HoverParams).is_empty());
+            assert!(!msg(loc, MsgKey::PragmaUnknown).is_empty());
+            assert!(!msg(loc, MsgKey::PragmaUnknownDidYouMean).is_empty());
+            assert!(!msg(loc, MsgKey::PragmaDeprecatedQuoted).is_empty());
             assert!(!msg(loc, MsgKey::HoverReturns).is_empty());
             assert!(!msg(loc, MsgKey::HoverRemarks).is_empty());
         }

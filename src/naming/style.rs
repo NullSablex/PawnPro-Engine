@@ -3,6 +3,8 @@
 //! Determinístico e tolerante: um `_` inicial e dígitos não desqualificam um
 //! estilo. Na dúvida, não acusa.
 
+use regex::Regex;
+
 /// Estilo de caixa esperado para uma categoria de identificador.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Case {
@@ -59,10 +61,74 @@ pub fn matches(name: &str, expected: Case) -> bool {
     }
 }
 
-/// Rótulo legível do estilo, para a mensagem ao usuário.
-#[must_use]
-pub fn label(expected: Case) -> &'static str {
-    expected.label()
+/// Um critério aceito por uma categoria: um dos estilos embutidos ou um regex
+/// do usuário.
+///
+/// Existe para o regex não precisar entrar em [`Case`], que é `Copy` e usado
+/// por [`suggest`](super::suggest) para *gerar* nomes — coisa que um padrão
+/// arbitrário não permite fazer.
+#[derive(Debug, Clone)]
+pub enum Rule {
+    Builtin(Case),
+    /// Regex âncorado, tal como escrito pelo usuário (para a mensagem).
+    Custom {
+        source: String,
+        re: Regex,
+    },
+}
+
+impl Rule {
+    /// Interpreta um item da lista de estilos. `/.../` (com barras) é regex;
+    /// qualquer outra coisa cai nos estilos embutidos.
+    ///
+    /// Um regex inválido devolve `None` — a configuração é do usuário e não
+    /// pode derrubar a análise; a categoria só perde aquele critério.
+    #[must_use]
+    pub fn from_config(s: &str) -> Option<Self> {
+        if let Some(body) = s.strip_prefix('/').and_then(|r| r.strip_suffix('/')) {
+            if body.is_empty() {
+                return None;
+            }
+            // Âncoras implícitas: o usuário descreve o nome inteiro, não um
+            // trecho dele — `[a-z]+` não deve aceitar `g_FOO`.
+            let anchored = format!("^(?:{body})$");
+            return Regex::new(&anchored).ok().map(|re| Self::Custom {
+                source: s.to_string(),
+                re,
+            });
+        }
+        Case::from_config(s).map(Self::Builtin)
+    }
+
+    /// `true` se `name` satisfaz este critério.
+    #[must_use]
+    pub fn matches(&self, name: &str) -> bool {
+        match self {
+            Self::Builtin(c) => matches(name, *c),
+            // Sem remover `_` inicial: o padrão é do usuário e ele decide se o
+            // aceita. Tirar caracteres por conta própria contrariaria o regex.
+            Self::Custom { re, .. } => re.is_match(name),
+        }
+    }
+
+    /// Rótulo para a mensagem de diagnóstico.
+    #[must_use]
+    pub fn label(&self) -> &str {
+        match self {
+            Self::Builtin(c) => c.label(),
+            Self::Custom { source, .. } => source,
+        }
+    }
+
+    /// O estilo embutido, quando houver — usado para sugerir a renomeação.
+    /// `None` para regex: dá para validar um padrão, não para gerar um nome.
+    #[must_use]
+    pub fn builtin(&self) -> Option<Case> {
+        match self {
+            Self::Builtin(c) => Some(*c),
+            Self::Custom { .. } => None,
+        }
+    }
 }
 
 fn is_camel(s: &str) -> bool {
@@ -113,6 +179,96 @@ fn is_cap_snake(s: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn catastrophic_pattern_is_linear_in_rust() {
+        // O mesmo padrão que trava um motor com backtracking. A crate `regex`
+        // garante tempo linear, então isto termina imediatamente.
+        let r = Rule::from_config("/^(a+)+$/").unwrap();
+        let alvo = "a".repeat(60) + "X";
+        let t = std::time::Instant::now();
+        assert!(!r.matches(&alvo));
+        assert!(t.elapsed().as_millis() < 500, "levou {:?}", t.elapsed());
+    }
+
+    #[test]
+    fn custom_rule_is_recognized_by_slashes() {
+        assert!(matches!(
+            Rule::from_config("/^g_[a-z]+$/"),
+            Some(Rule::Custom { .. })
+        ));
+        assert!(matches!(
+            Rule::from_config("camelCase"),
+            Some(Rule::Builtin(Case::Camel))
+        ));
+        // Sem barras não é regex: continua caindo nos embutidos (e falhando).
+        assert!(Rule::from_config("^g_[a-z]+$").is_none());
+    }
+
+    #[test]
+    fn custom_rule_matches_user_pattern() {
+        let r = Rule::from_config("/g_[a-zA-Z]+/").unwrap();
+        assert!(r.matches("g_playerHealth"));
+        assert!(!r.matches("playerHealth"));
+    }
+
+    #[test]
+    fn custom_rule_is_anchored() {
+        // Sem âncora implícita `[a-z]+` aceitaria qualquer nome que contivesse
+        // minúsculas — o usuário descreve o nome inteiro.
+        let r = Rule::from_config("/[a-z]+/").unwrap();
+        assert!(r.matches("health"));
+        assert!(!r.matches("g_HEALTH"));
+        assert!(!r.matches("playerHealth"));
+    }
+
+    #[test]
+    fn user_written_anchors_still_work() {
+        // Quem já escreve `^...$` não é penalizado pelo agrupamento interno.
+        let r = Rule::from_config("/^g_[a-z]+$/").unwrap();
+        assert!(r.matches("g_health"));
+        assert!(!r.matches("g_Health"));
+    }
+
+    #[test]
+    fn alternation_is_not_broken_by_anchoring() {
+        // `^(?:a|b)$` e não `^a|b$`, que ancoraria só os extremos.
+        let r = Rule::from_config("/foo|bar/").unwrap();
+        assert!(r.matches("foo"));
+        assert!(r.matches("bar"));
+        assert!(!r.matches("xfooy"));
+        assert!(!r.matches("foobar"));
+    }
+
+    #[test]
+    fn invalid_regex_is_ignored_not_fatal() {
+        assert!(Rule::from_config("/[unclosed/").is_none());
+        assert!(Rule::from_config("//").is_none());
+    }
+
+    #[test]
+    fn custom_rule_keeps_leading_underscore() {
+        // Os embutidos toleram `_` inicial; o regex do usuário manda.
+        let r = Rule::from_config("/^[a-z]+$/").unwrap();
+        assert!(!r.matches("_health"));
+        assert!(matches("_health", Case::Snake));
+    }
+
+    #[test]
+    fn custom_rule_label_is_the_source() {
+        let r = Rule::from_config("/^g_.+$/").unwrap();
+        assert_eq!(r.label(), "/^g_.+$/");
+        assert_eq!(Rule::from_config("camelCase").unwrap().label(), "camelCase");
+    }
+
+    #[test]
+    fn only_builtin_rules_suggest_renames() {
+        assert!(Rule::from_config("/^g_.+$/").unwrap().builtin().is_none());
+        assert_eq!(
+            Rule::from_config("snake_case").unwrap().builtin(),
+            Some(Case::Snake)
+        );
+    }
 
     #[test]
     fn parses_config_values() {
@@ -171,7 +327,10 @@ mod tests {
     #[test]
     fn cap_snake_config_and_suggestion() {
         assert_eq!(Case::from_config("Capitalized_Snake"), Some(Case::CapSnake));
-        assert_eq!(label(Case::CapSnake), "Capitalized_Snake");
+        assert_eq!(
+            Rule::from_config("Capitalized_Snake").unwrap().label(),
+            "Capitalized_Snake"
+        );
     }
 
     #[test]

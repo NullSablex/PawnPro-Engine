@@ -41,7 +41,7 @@ O binário de debug é detectado automaticamente pela extensão PawnPro se estiv
 ```
 src/
   parser/       ← lexer, parser de símbolos e tipos
-  analyzer/     ← diagnósticos PP0001–PP0017
+  analyzer/     ← diagnósticos PP0001–PP0019
   intellisense/ ← completions, hover, signature, codelens, references, semantic tokens, formatter
   workspace.rs  ← orquestra análise de cada arquivo
   server.rs     ← handlers LSP

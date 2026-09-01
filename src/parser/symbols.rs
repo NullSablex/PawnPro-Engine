@@ -1,7 +1,9 @@
 use regex::Regex;
 
 use super::{
-    lexer::{pragma_deprecated_message, strip_line_comments, update_brace_depth},
+    lexer::{
+        is_pragma_deprecated, pragma_deprecated_message, strip_line_comments, update_brace_depth,
+    },
     types::{Deprecation, IncludeDirective, Param, ParsedFile, Symbol, SymbolKind},
 };
 use crate::util::to_u32;
@@ -244,49 +246,75 @@ fn parse_params(raw: &str) -> Vec<Param> {
     params
 }
 
+/// Extrai o comentário de documentação de um símbolo declarado em `line_idx`.
+///
+/// A regra é a mesma do Javadoc/PHPDoc: vale **um bloco só, o imediatamente
+/// acima da declaração**. Isso evita o modo de falha em que a varredura sobe o
+/// arquivo acumulando comentários de outras seções — e dispensa tratar régua,
+/// cabeçalho e ornamento como casos especiais, porque nada além do bloco
+/// vizinho é considerado.
+///
+/// São aceitos:
+///
+/// - o bloco `/* … */` (em uma ou várias linhas) colado na declaração;
+/// - uma sequência contígua de linhas `//`, colada na declaração — convenção
+///   comum em Pawn.
+///
+/// Entre o comentário e a declaração pode haver `#pragma deprecated`, que é a
+/// diretiva que marca o símbolo. Uma linha em branco separa: o que estiver
+/// acima dela pertence a outra coisa.
 fn extract_doc(lines: &[&str], line_idx: usize) -> Option<String> {
-    let mut doc_lines = Vec::new();
-    let mut found = false;
-    // Caminha para cima a partir da linha anterior. Índices em `usize` com
-    // decremento via `checked_sub` evitam o uso de `isize` (e os casts que ele
-    // exigiria); ao chegar em 0 o loop termina.
-    let mut i = line_idx.checked_sub(1);
-    while let Some(idx) = i {
-        let l = lines[idx].trim();
-        if l.is_empty() {
-            if found {
-                break;
-            }
-            i = idx.checked_sub(1);
-            continue;
-        }
-        if l.starts_with("//") {
-            doc_lines.push(l.to_string());
-            found = true;
-        } else if l.ends_with("*/") {
-            doc_lines.push(l.to_string());
-            // busca o início do bloco
-            let mut j = idx.checked_sub(1);
-            while let Some(jdx) = j {
-                let ll = lines[jdx].trim();
-                doc_lines.push(ll.to_string());
-                if ll.contains("/*") {
-                    break;
-                }
-                j = jdx.checked_sub(1);
-            }
-            break;
-        } else {
-            break;
-        }
-        i = idx.checked_sub(1);
+    // Pula o `#pragma deprecated` entre o comentário e a declaração.
+    let mut idx = line_idx.checked_sub(1)?;
+    while is_pragma_deprecated(lines[idx].trim()) {
+        idx = idx.checked_sub(1)?;
     }
-    if doc_lines.is_empty() {
-        None
+
+    let last = lines[idx].trim();
+    if last.ends_with("*/") {
+        block_doc(lines, idx)
+    } else if last.starts_with("//") {
+        line_doc(lines, idx)
     } else {
-        doc_lines.reverse();
-        Some(doc_lines.join("\n"))
+        // Qualquer outra coisa (código, linha em branco) rompe a adjacência.
+        None
     }
+}
+
+/// Bloco `/* … */` que termina em `idx`, subindo até o `/*` que o abre.
+fn block_doc(lines: &[&str], idx: usize) -> Option<String> {
+    let mut out: Vec<&str> = Vec::new();
+    let mut i = idx;
+    loop {
+        let l = lines[i].trim();
+        out.push(l);
+        // `/** … */` numa linha só já está completo aqui.
+        if l.contains("/*") {
+            out.reverse();
+            return Some(out.join("\n"));
+        }
+        // Sem `/*` que abra, o `*/` não pertence a um bloco deste símbolo.
+        i = i.checked_sub(1)?;
+    }
+}
+
+/// Sequência contígua de linhas `//` terminando em `idx`.
+fn line_doc(lines: &[&str], idx: usize) -> Option<String> {
+    let mut out: Vec<&str> = Vec::new();
+    let mut i = Some(idx);
+    while let Some(cur) = i {
+        let l = lines[cur].trim();
+        if !l.starts_with("//") {
+            break;
+        }
+        out.push(l);
+        i = cur.checked_sub(1);
+    }
+    if out.is_empty() {
+        return None;
+    }
+    out.reverse();
+    Some(out.join("\n"))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -435,7 +463,10 @@ fn continue_multiline_func(
     let (pidx, pcol, pname, pparams, pkind, pdep, pdoc) =
         multiline_func.take().expect("multiline_func presente");
     let rest = &line[close_pos + 1..];
-    if rest.contains('{') {
+    // `native` e `forward` declaram sem corpo e terminam em `;` — esperar por
+    // uma `{` que nunca vem descartaria o símbolo.
+    let bodyless = matches!(pkind, SymbolKind::Native | SymbolKind::Forward);
+    if bodyless || rest.contains('{') {
         let parsed_params = parse_params(&pparams);
         result.symbols.push(Symbol {
             signature: Some(format!("{}({})", pname, pparams.trim())),
@@ -498,8 +529,10 @@ impl ParserState {
     /// ao antigo `continue`); ao final, a profundidade de chaves é atualizada.
     fn process_line(&mut self, raw_line: &str, line_idx: usize, raw_lines: &[&str]) {
         // `#pragma deprecated` marca o próximo símbolo declarado; a mensagem
-        // que a segue é repassada no aviso de uso.
-        if let Some(m) = pragma_deprecated_message(raw_line) {
+        // que a segue é repassada no aviso de uso. O teste barato vem primeiro:
+        // extrair a mensagem aloca, e a diretiva é rara em meio ao arquivo.
+        if is_pragma_deprecated(raw_line) {
+            let m = pragma_deprecated_message(raw_line).unwrap_or_default();
             self.pending_deprecated = Deprecation::marked((!m.is_empty()).then_some(m));
             let stripped = strip_line_comments(raw_line, self.in_block);
             self.in_block = stripped.in_block;
@@ -1104,6 +1137,179 @@ mod tests {
                 .iter()
                 .any(|s| s.name == "MAX_ZONES" && matches!(s.kind, SymbolKind::StaticConst))
         );
+    }
+
+    #[test]
+    fn doc_survives_pragma_between_comment_and_decl() {
+        // A diretiva fica entre o comentário e a declaração; o doc é do símbolo
+        // que ela marca, não de quem vier antes.
+        let src = "/**\n * Bane com motivo.\n */\n#pragma deprecated Use BanPlayerFor\nnative BanEx(playerid);";
+        let f = parse_file(src);
+        let sym = f.symbols.iter().find(|s| s.name == "BanEx").unwrap();
+        assert!(sym.deprecated);
+        assert!(
+            sym.doc
+                .as_deref()
+                .is_some_and(|d| d.contains("Bane com motivo")),
+            "doc: {:?}",
+            sym.doc
+        );
+    }
+
+    #[test]
+    fn parses_multiline_native() {
+        // Assinatura quebrada em várias linhas, como no omp-stdlib.
+        let src = "native BanEx(\n    playerid,\n    const reason[]\n);";
+        let f = parse_file(src);
+        let sym = f
+            .symbols
+            .iter()
+            .find(|s| s.name == "BanEx")
+            .expect("BanEx não encontrada");
+        assert_eq!(sym.kind, SymbolKind::Native);
+        assert_eq!(sym.params.len(), 2);
+        assert_eq!(sym.params[0].name, "playerid");
+        assert_eq!(sym.params[1].name, "reason");
+    }
+
+    #[test]
+    fn parses_multiline_forward() {
+        let src = "forward OnPlayerBanned(\n    playerid,\n    Float:duration\n);";
+        let f = parse_file(src);
+        let sym = f
+            .symbols
+            .iter()
+            .find(|s| s.name == "OnPlayerBanned")
+            .expect("OnPlayerBanned não encontrada");
+        assert_eq!(sym.kind, SymbolKind::Forward);
+        assert_eq!(sym.params[1].tag.as_deref(), Some("Float"));
+    }
+
+    #[test]
+    fn multiline_native_keeps_doc_and_deprecation() {
+        let src = "/**\n * Bane com motivo.\n *\n * @param playerid  o jogador\n */\n#pragma deprecated Use BanPlayerFor\nnative BanEx(\n    playerid,\n    const reason[]\n);";
+        let f = parse_file(src);
+        let sym = f.symbols.iter().find(|s| s.name == "BanEx").unwrap();
+        assert!(sym.deprecated);
+        assert_eq!(sym.deprecated_message.as_deref(), Some("Use BanPlayerFor"));
+        assert!(
+            sym.doc
+                .as_deref()
+                .is_some_and(|d| d.contains("@param playerid")),
+            "doc: {:?}",
+            sym.doc
+        );
+    }
+
+    #[test]
+    fn multiline_native_with_tagged_return() {
+        let src = "native bool:IsActorStreamedIn(\n    actorid,\n    playerid\n);";
+        let f = parse_file(src);
+        assert!(
+            f.symbols.iter().any(|s| s.name == "IsActorStreamedIn"),
+            "{:?}",
+            f.symbols.iter().map(|s| &s.name).collect::<Vec<_>>()
+        );
+    }
+
+    // --- extract_doc: um bloco só, o imediatamente acima ---------------
+
+    fn doc_de(src: &str, nome: &str) -> Option<String> {
+        parse_file(src)
+            .symbols
+            .iter()
+            .find(|s| s.name == nome)?
+            .doc
+            .clone()
+    }
+
+    #[test]
+    fn bloco_colado_na_declaracao_e_o_doc() {
+        let src = "/**\n * Bane alguém.\n */\nstock Ban() { return 1; }\n";
+        assert_eq!(
+            doc_de(src, "Ban").as_deref(),
+            Some("/**\n* Bane alguém.\n*/")
+        );
+    }
+
+    #[test]
+    fn bloco_de_uma_linha_so() {
+        let src = "/** Limite antigo. */\n#define MAX_X (50)\n";
+        assert_eq!(
+            doc_de(src, "MAX_X").as_deref(),
+            Some("/** Limite antigo. */")
+        );
+    }
+
+    #[test]
+    fn linhas_de_comentario_contiguas_sao_doc() {
+        let src = "// Devolve o nome.\n// Vazio se o id não existir.\nstock Nome() { return 1; }\n";
+        assert_eq!(
+            doc_de(src, "Nome").as_deref(),
+            Some("// Devolve o nome.\n// Vazio se o id não existir.")
+        );
+    }
+
+    #[test]
+    fn so_o_bloco_vizinho_conta() {
+        // O doc da função acima não pode escorrer para a de baixo.
+        let src = "/**\n * Doc da primeira.\n */\nstock Primeira() { return 1; }\n\nstock Segunda() { return 1; }\n";
+        assert_eq!(doc_de(src, "Segunda"), None);
+    }
+
+    #[test]
+    fn linha_em_branco_separa_o_doc_da_declaracao() {
+        // Com uma linha em branco no meio, o comentário não é do símbolo.
+        let src = "// Anotação solta.\n\nstock Fn() { return 1; }\n";
+        assert_eq!(doc_de(src, "Fn"), None);
+    }
+
+    #[test]
+    fn codigo_entre_o_comentario_e_a_declaracao_rompe_o_vinculo() {
+        let src =
+            "// Doc da primeira.\nstock Primeira() { return 1; }\nstock Segunda() { return 1; }\n";
+        assert_eq!(doc_de(src, "Segunda"), None);
+    }
+
+    #[test]
+    fn regua_e_cabecalho_de_secao_nao_escorrem_para_o_simbolo() {
+        // Este era o modo de falha: a varredura subia o arquivo acumulando
+        // comentários de outras seções. Agora nem chega lá — só o bloco
+        // vizinho é lido, e a linha em branco encerra.
+        let src = "// ------------------------------\n// 9. Outra seção\n// ------------------------------\n\nstock Fn() { return 1; }\n";
+        assert_eq!(doc_de(src, "Fn"), None);
+
+        let src = "// --- PP0004: sem corpo -------------\n\nstock Outra(playerid);\n";
+        assert_eq!(doc_de(src, "Outra"), None);
+    }
+
+    #[test]
+    fn cabecalho_colado_na_declaracao_ainda_e_lido() {
+        // Sem linha em branco, é adjacente — e a regra vale para todos por
+        // igual, sem adivinhar a intenção de quem escreveu.
+        let src = "// --- Seção 9 ---\nstock Fn() { return 1; }\n";
+        assert_eq!(doc_de(src, "Fn").as_deref(), Some("// --- Seção 9 ---"));
+    }
+
+    #[test]
+    fn pragma_entre_o_doc_e_a_declaracao_nao_rompe() {
+        let src = "/**\n * Bane alguém.\n */\n#pragma deprecated Use BanPlayerFor\nstock Ban() { return 1; }\n";
+        let f = parse_file(src);
+        let s = f.symbols.iter().find(|s| s.name == "Ban").unwrap();
+        assert!(s.deprecated);
+        assert!(s.doc.as_deref().unwrap().contains("Bane alguém."));
+    }
+
+    #[test]
+    fn fim_de_bloco_sem_abertura_nao_vira_doc() {
+        // `*/` solto: sem `/*` que abra, não há bloco.
+        let src = "algo */\n#define MAX_Y (1)\n";
+        assert_eq!(doc_de(src, "MAX_Y"), None);
+    }
+
+    #[test]
+    fn declaracao_na_primeira_linha_nao_tem_doc() {
+        assert_eq!(doc_de("stock Fn() { return 1; }\n", "Fn"), None);
     }
 
     #[test]

@@ -78,11 +78,14 @@ Em `.pawnpro/config.json`, seção `naming` (genérica, sem domínio):
   "naming": {
     "enabled": true,
     "style": {
-      "functions": "camelCase",   // camelCase | snake_case | PascalCase | off
-      "globals":   "camelCase",
-      "locals":    "camelCase",
-      "constants": "UPPER_CASE",
-      "enums":     "PascalCase"
+      // Lista por categoria: o nome passa se casar com QUALQUER item.
+      // Lista vazia desliga a checagem daquela categoria.
+      "functions":  ["camelCase"],
+      "globals":    ["camelCase", "/^g_[a-z][a-zA-Z0-9]*$/"],
+      "locals":     ["camelCase"],
+      "constants":  ["UPPER_CASE"],
+      "macros":     ["UPPER_CASE"],
+      "parameters": ["camelCase"]
     },
     "minLength": 2,
     "allowShortInLoops": ["i", "j", "k"],
@@ -140,7 +143,22 @@ src/naming/
 - Extração de locais: `src/naming/locals.rs` varre os tokens (o `StmtTree` não
   guarda o identificador do `VarDecl`).
 - **Estilo de caixa** (`src/naming/style.rs`): por categoria, em
-  `analysis.naming.style` (`functions`/`globals`/`locals`/`constants`/
-  `parameters`), cada um `camelCase`/`snake_case`/`PascalCase`/`UPPER_CASE`/`Capitalized_Snake`/`off`.
-  Padrão `off` em todas — só checa o que o usuário pedir. Ordem das regras:
-  placeholder → comprimento → estilo (a mais específica vence).
+  `analysis.naming.style` (`functions`/`globals`/`locals`/`constants`/`macros`/
+  `parameters`), cada uma uma **lista** de critérios — o nome passa se casar com
+  qualquer item; lista vazia desliga a checagem. Ordem das regras: placeholder →
+  comprimento → estilo (a mais específica vence).
+- **`Rule`** é o critério aceito: `Builtin(Case)` para os cinco estilos
+  embutidos, ou `Custom { source, re }` para um padrão do usuário escrito entre
+  barras (`/^g_[a-z][a-zA-Z0-9]*$/`). É um tipo à parte de `Case` porque `Case` é
+  `Copy` e alimenta o `suggest`, que **gera** nomes — de um regex arbitrário não
+  se deriva um nome, então `Rule::builtin()` devolve `None` para eles e o quick
+  fix não oferece sugestão inválida.
+  - O padrão é compilado âncorado (`^(?:…)$`): descreve o nome inteiro, e o
+    agrupamento impede que uma alternância no topo ancore só os extremos.
+  - O `_` inicial **não** é removido antes da comparação, ao contrário dos
+    embutidos: quem escreve o padrão decide se o aceita.
+  - Um padrão inválido devolve `None` em `Rule::from_config` — a configuração é
+    do usuário e não pode derrubar a análise; a categoria só perde aquele
+    critério.
+  - `NameIssueKind::WrongStyle` carrega `Vec<String>` (e não `&'static str`)
+    porque o rótulo de um regex só existe em runtime.

@@ -41,8 +41,8 @@ pub fn evaluate(site: &NameSite, cfg: &NamingConfig, lists: &ResolvedLists) -> O
     // nome não casar com NENHUM deles. Índices de loop curtos ficam isentos.
     if !tolerated_short {
         let accepted = accepted_styles(&cfg.style, site.category);
-        if !accepted.is_empty() && !accepted.iter().any(|c| style::matches(&site.name, *c)) {
-            let labels = accepted.iter().map(|c| style::label(*c)).collect();
+        if !accepted.is_empty() && !accepted.iter().any(|r| r.matches(&site.name)) {
+            let labels = accepted.iter().map(|r| r.label().to_string()).collect();
             return Some(issue(site, NameIssueKind::WrongStyle(labels)));
         }
     }
@@ -52,7 +52,7 @@ pub fn evaluate(site: &NameSite, cfg: &NamingConfig, lists: &ResolvedLists) -> O
 
 /// Estilos aceitos para a categoria (vazio = sem checagem). Valores inválidos
 /// na configuração são ignorados.
-fn accepted_styles(cfg: &StyleConfig, category: NameCategory) -> Vec<style::Case> {
+fn accepted_styles(cfg: &StyleConfig, category: NameCategory) -> Vec<style::Rule> {
     let raw = match category {
         NameCategory::Function => &cfg.functions,
         NameCategory::Global => &cfg.globals,
@@ -62,7 +62,7 @@ fn accepted_styles(cfg: &StyleConfig, category: NameCategory) -> Vec<style::Case
         NameCategory::Parameter => &cfg.parameters,
     };
     raw.iter()
-        .filter_map(|s| style::Case::from_config(s))
+        .filter_map(|s| style::Rule::from_config(s))
         .collect()
 }
 
@@ -163,6 +163,38 @@ mod tests {
         assert_eq!(r.kind, NameIssueKind::Placeholder);
     }
 
+    #[test]
+    fn user_regex_accepts_its_own_convention() {
+        let c = cfg_style(&["/^g_[a-z][a-zA-Z0-9]*$/"]);
+        assert!(ev(&sited("g_playerHealth", false, NameCategory::Function), &c).is_none());
+    }
+
+    #[test]
+    fn user_regex_flags_what_it_does_not_match() {
+        let c = cfg_style(&["/^g_[a-z][a-zA-Z0-9]*$/"]);
+        let r = ev(&sited("playerHealth", false, NameCategory::Function), &c).unwrap();
+        assert_eq!(
+            r.kind,
+            NameIssueKind::WrongStyle(vec!["/^g_[a-z][a-zA-Z0-9]*$/".to_string()])
+        );
+    }
+
+    #[test]
+    fn builtin_and_user_regex_coexist() {
+        // A categoria aceita o nome que casar com QUALQUER critério.
+        let c = cfg_style(&["camelCase", "/^g_.+$/"]);
+        assert!(ev(&sited("playerHealth", false, NameCategory::Function), &c).is_none());
+        assert!(ev(&sited("g_ANYTHING", false, NameCategory::Function), &c).is_none());
+        assert!(ev(&sited("player_health", false, NameCategory::Function), &c).is_some());
+    }
+
+    #[test]
+    fn invalid_user_regex_is_ignored_without_breaking_the_rest() {
+        let c = cfg_style(&["/[unclosed/", "camelCase"]);
+        assert!(ev(&sited("playerHealth", false, NameCategory::Function), &c).is_none());
+        assert!(ev(&sited("DoThing", false, NameCategory::Function), &c).is_some());
+    }
+
     fn cfg_style(functions: &[&str]) -> NamingConfig {
         let mut c = cfg();
         c.style.functions = functions.iter().map(|s| (*s).to_string()).collect();
@@ -184,7 +216,10 @@ mod tests {
             &cfg_style(&["camelCase"]),
         )
         .unwrap();
-        assert_eq!(r.kind, NameIssueKind::WrongStyle(vec!["camelCase"]));
+        assert_eq!(
+            r.kind,
+            NameIssueKind::WrongStyle(vec!["camelCase".to_string()])
+        );
     }
 
     #[test]
@@ -205,7 +240,7 @@ mod tests {
         let r = ev(&sited("do_thing", false, NameCategory::Function), &cfg).unwrap();
         assert_eq!(
             r.kind,
-            NameIssueKind::WrongStyle(vec!["camelCase", "PascalCase"])
+            NameIssueKind::WrongStyle(vec!["camelCase".to_string(), "PascalCase".to_string()])
         );
     }
 
