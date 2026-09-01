@@ -11,7 +11,6 @@ mod style;
 mod suggest;
 
 pub use locals::collect_local_decls;
-pub use style::Case;
 
 use crate::config::NamingConfig;
 
@@ -46,8 +45,10 @@ pub enum NameIssueKind {
     /// Identificador genérico da blocklist (`tmp`, `foo`, …).
     Placeholder,
     /// Caixa fora dos estilos aceitos para a categoria. Carrega os rótulos dos
-    /// estilos aceitos (ex.: `camelCase`, `snake_case`) para a mensagem.
-    WrongStyle(Vec<&'static str>),
+    /// estilos aceitos (ex.: `camelCase`, `snake_case`) para a mensagem. É
+    /// `String` porque um critério pode ser um regex do usuário, cujo rótulo só
+    /// existe em runtime.
+    WrongStyle(Vec<String>),
 }
 
 /// Resultado da análise de um identificador.
@@ -96,7 +97,11 @@ pub fn suggestions_for(name: &str, cfg: &NamingConfig) -> Vec<String> {
         &s.parameters,
     ];
     for raw in all.into_iter().flatten() {
-        if let Some(case) = Case::from_config(raw)
+        // Só os estilos embutidos geram sugestão: de um regex do usuário dá
+        // para saber se o nome passa, não como reescrevê-lo.
+        if let Some(case) = style::Rule::from_config(raw)
+            .as_ref()
+            .and_then(style::Rule::builtin)
             && let Some(suggestion) = suggest::to_style(name, case)
             && !out.contains(&suggestion)
         {
