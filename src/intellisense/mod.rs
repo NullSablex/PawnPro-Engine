@@ -72,7 +72,7 @@ pub fn suggest_symbol(
 ) -> Option<String> {
     let all = collect_all_symbols(state, file_path, inc_paths, parsed);
     let names: Vec<&str> = all.iter().map(|s| s.name.as_str()).collect();
-    crate::similar::closest(name, names.into_iter()).map(str::to_string)
+    crate::similar::closest(name, names).map(str::to_string)
 }
 
 pub(crate) fn collect_all_symbols(
