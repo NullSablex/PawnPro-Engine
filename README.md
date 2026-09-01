@@ -28,7 +28,7 @@ A extensão inicia o motor automaticamente quando encontra o binário; ele acomp
 
 ## Capacidades
 
-- **Diagnósticos** — 19 códigos `PP####` cobrindo erros de estrutura, código morto, símbolos não declarados, depreciação, indentação, nomenclatura e `#pragma` malformado; 11 deles com correção automática (ver [docs/diagnostics.md](docs/diagnostics.md)).
+- **Diagnósticos** — 19 códigos `PP####` cobrindo erros de estrutura, código morto, símbolos não declarados, depreciação, indentação, nomenclatura e `#pragma` malformado; 13 deles com correção automática (ver [docs/diagnostics.md](docs/diagnostics.md)).
 - **Completions** — símbolos de todos os includes transitivos com snippets de parâmetros; itens depreciados marcados.
 - **Hover** — assinatura e comentário de documentação formatado (Javadoc `@param` e XMLdoc `<summary>`, o formato do `omp-stdlib`); em `#include` mostra o caminho resolvido.
 - **Signature Help** — parâmetro ativo destacado ao digitar `(` e `,`.
@@ -37,7 +37,7 @@ A extensão inicia o motor automaticamente quando encontra o binário; ele acomp
 - **Semantic Tokens** — coloração semântica com suporte a chamadas multiline.
 - **Formatação** — documento inteiro e seleção de intervalo.
 - **Assistente de nomenclatura** — convenções de caixa por categoria, com padrão próprio por expressão regular para o que os estilos prontos não descrevem.
-- **Code actions** — correção automática para 11 dos diagnósticos.
+- **Code actions** — correção automática para 13 dos diagnósticos.
 - **Invalidação granular** — ao salvar um include, o motor republica automaticamente os diagnósticos de todos os arquivos abertos que dependem dele, transitivamente.
 
 Para detalhes do protocolo e das opções de configuração, consulte [docs/lsp.md](docs/lsp.md).
