@@ -181,6 +181,17 @@ mod tests {
     use super::*;
 
     #[test]
+    fn catastrophic_pattern_is_linear_in_rust() {
+        // O mesmo padrão que trava um motor com backtracking. A crate `regex`
+        // garante tempo linear, então isto termina imediatamente.
+        let r = Rule::from_config("/^(a+)+$/").unwrap();
+        let alvo = "a".repeat(60) + "X";
+        let t = std::time::Instant::now();
+        assert!(!r.matches(&alvo));
+        assert!(t.elapsed().as_millis() < 500, "levou {:?}", t.elapsed());
+    }
+
+    #[test]
     fn custom_rule_is_recognized_by_slashes() {
         assert!(matches!(
             Rule::from_config("/^g_[a-z]+$/"),
