@@ -13,7 +13,7 @@ mod semantic_tokens;
 mod signature;
 
 pub use codelens::get_code_lens;
-pub use completion::{get_at_completions, get_completions};
+pub use completion::{MAX_COMPLETION_ITEMS, get_at_completions, get_completions};
 pub use docs::{DocLabels, parse_doc};
 pub use format_style::{BracePlacement, FormatStyle, Preset};
 pub use formatter::{format_document, format_range};

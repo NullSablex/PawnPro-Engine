@@ -65,7 +65,19 @@ O motor registra três caracteres de disparo:
 | `#` | Completions de diretivas (`#include`, `#define`, `#if`, `#ifdef`, etc.) com snippets |
 | `@` | Tags de documentação (`@param`, `@return`, `@remarks`) — apenas dentro de comentários |
 
-Completions normais (sem trigger) listam símbolos de todos os includes transitivos com snippets de parâmetros. Itens marcados com `#pragma deprecated` aparecem com tag de depreciação.
+Completions normais (sem trigger) listam símbolos de todos os includes transitivos com snippets de parâmetros.
+
+A lista é ordenada **pela proximidade do cursor**, não pelo alfabeto:
+
+1. parâmetros e variáveis locais da função sob o cursor;
+2. símbolos declarados no próprio arquivo;
+3. símbolos vindos dos includes;
+4. palavras-chave da linguagem;
+5. qualquer símbolo marcado com `#pragma deprecated` — aparece com a tag de depreciação e vai para o fim, seja qual for sua origem.
+
+Dentro de um grupo, a ordem é alfabética sem diferenciar maiúsculas.
+
+Um projeto com muitos includes chega a milhares de símbolos. A resposta é cortada em **1000 itens** e marcada como `isIncomplete`, o que faz o editor pedir a lista de novo conforme o prefixo cresce — o mecanismo do LSP para listas grandes. Como o corte vem depois da ordenação, o que se perde são os itens mais distantes do cursor.
 
 ## Comentários de documentação
 

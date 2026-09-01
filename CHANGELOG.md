@@ -80,6 +80,19 @@ caso encontre por favor relate para ajudar a manter a consistência dos dados.
   por ecossistema (cargo, GitHub Actions, pip) em vez de abrir um PR por
   dependência, reduzindo o ruído de manutenção
 
+- **Autocomplete ordenado pela proximidade do cursor** — a lista vinha ordenada
+  de um jeito que punha as variáveis locais e os parâmetros **abaixo** de
+  milhares de nativas dos includes; o que está mais perto de quem escreve
+  aparecia por último. A ordem passa a ser: locais e parâmetros, símbolos do
+  próprio arquivo, símbolos dos includes, palavras-chave e, por fim, os
+  marcados com `#pragma deprecated` — que continuam aparecendo (às vezes é
+  mesmo o que se quer), mas nunca à frente de uma alternativa viva. Dentro de
+  cada grupo a ordem é alfabética sem diferenciar maiúsculas
+- **Listas grandes de completion não travam mais a digitação** — um projeto com
+  muitos includes mandava todos os símbolos ao editor a cada tecla. A resposta
+  passa a ser cortada em 1000 itens e marcada como `isIncomplete`, fazendo o
+  editor pedir de novo conforme o prefixo cresce. O corte vem depois da
+  ordenação, então o que se perde são os itens mais distantes do cursor
 - **Correções rápidas para mais nove diagnósticos** — passam a ter *quick fix*:
   remover o corpo `{ }` ilegal de um `native`/`forward` (`PP0002`/`PP0003`);
   dar corpo vazio ou converter em `forward` quando falta o corpo (`PP0004`);

@@ -8,14 +8,14 @@ use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::{
     CodeAction, CodeActionKind, CodeActionOrCommand, CodeActionParams,
     CodeActionProviderCapability, CodeActionResponse, CodeLens, CodeLensOptions, CodeLensParams,
-    CompletionItem, CompletionOptions, CompletionParams, CompletionResponse, Diagnostic,
-    DiagnosticSeverity, DiagnosticTag, DidChangeConfigurationParams, DidChangeTextDocumentParams,
-    DidChangeWatchedFilesParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
-    DidSaveTextDocumentParams, DocumentFormattingParams, DocumentRangeFormattingParams, Hover,
-    HoverParams, HoverProviderCapability, InitializeParams, InitializeResult, InitializedParams,
-    Location, MessageType, NumberOrString, OneOf, Position, PrepareRenameResponse, Range,
-    ReferenceParams, RenameOptions, RenameParams, SaveOptions, SemanticTokensFullOptions,
-    SemanticTokensOptions, SemanticTokensParams, SemanticTokensResult,
+    CompletionItem, CompletionList, CompletionOptions, CompletionParams, CompletionResponse,
+    Diagnostic, DiagnosticSeverity, DiagnosticTag, DidChangeConfigurationParams,
+    DidChangeTextDocumentParams, DidChangeWatchedFilesParams, DidCloseTextDocumentParams,
+    DidOpenTextDocumentParams, DidSaveTextDocumentParams, DocumentFormattingParams,
+    DocumentRangeFormattingParams, Hover, HoverParams, HoverProviderCapability, InitializeParams,
+    InitializeResult, InitializedParams, Location, MessageType, NumberOrString, OneOf, Position,
+    PrepareRenameResponse, Range, ReferenceParams, RenameOptions, RenameParams, SaveOptions,
+    SemanticTokensFullOptions, SemanticTokensOptions, SemanticTokensParams, SemanticTokensResult,
     SemanticTokensServerCapabilities, ServerCapabilities, ServerInfo, SignatureHelp,
     SignatureHelpOptions, SignatureHelpParams, TextDocumentPositionParams,
     TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions,
@@ -215,13 +215,24 @@ impl LanguageServer for PawnProServer {
         let position = params.text_document_position.position;
         let state = Arc::clone(&self.state);
 
-        let items = tokio::task::spawn_blocking(move || {
+        let mut items = tokio::task::spawn_blocking(move || {
             intellisense::get_completions(&state.blocking_read(), &uri_str, position)
         })
         .await
         .unwrap_or_default();
 
-        Ok((!items.is_empty()).then_some(CompletionResponse::Array(items)))
+        if items.is_empty() {
+            return Ok(None);
+        }
+        // Já vêm ordenados por proximidade do cursor, então o corte descarta os
+        // menos relevantes; `is_incomplete` faz o editor pedir de novo enquanto
+        // o prefixo cresce.
+        let is_incomplete = items.len() > intellisense::MAX_COMPLETION_ITEMS;
+        items.truncate(intellisense::MAX_COMPLETION_ITEMS);
+        Ok(Some(CompletionResponse::List(CompletionList {
+            is_incomplete,
+            items,
+        })))
     }
 
     async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
