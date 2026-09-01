@@ -80,6 +80,15 @@ caso encontre por favor relate para ajudar a manter a consistência dos dados.
   por ecossistema (cargo, GitHub Actions, pip) em vez de abrir um PR por
   dependência, reduzindo o ruído de manutenção
 
+- **Correções rápidas para mais nove diagnósticos** — passam a ter *quick fix*:
+  remover o corpo `{ }` ilegal de um `native`/`forward` (`PP0002`/`PP0003`);
+  dar corpo vazio ou converter em `forward` quando falta o corpo (`PP0004`);
+  trocar por um símbolo de nome parecido quando a função chamada não existe
+  (`PP0010`, o caso comum de erro de digitação); remover o `#define` e o
+  `#include` não utilizados (`PP0011`/`PP0012`); e reindentar a linha
+  (`PP0017`), usando o estilo de formatação configurado no projeto, não uma
+  indentação fixa. Somados aos que já existiam, catorze dos dezenove
+  diagnósticos agora oferecem correção
 - **`PP0019` — `#pragma` desconhecido ou malformado** — o compilador rejeita uma
   diretiva que não conhece (erro 207), mas só na compilação; agora o aviso
   aparece enquanto se escreve, com *quick fix*. Cobre o nome errado

@@ -5,6 +5,7 @@ mod messages;
 mod naming;
 mod parser;
 mod server;
+mod similar;
 mod text;
 mod util;
 mod workspace;

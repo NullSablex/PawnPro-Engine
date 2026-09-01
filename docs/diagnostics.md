@@ -44,6 +44,25 @@ Cobre dois casos:
 
 Nos dois casos há *quick fix*.
 
+## Correções rápidas (quick fixes)
+
+Onde a correção é determinística, o diagnóstico vem com uma ação aplicável por clique (`Ctrl+.` / lâmpada):
+
+| Código | Ação |
+|--------|------|
+| `PP0002`, `PP0003` | Remover o corpo `{ … }` que o compilador não aceita em `native`/`forward` |
+| `PP0004` | Adicionar corpo vazio, ou converter `public`/`stock` em `forward` |
+| `PP0005`, `PP0006`, `PP0009`, `PP0016` | Remover a declaração não utilizada |
+| `PP0010` | Trocar por um símbolo conhecido de nome parecido (erro de digitação) |
+| `PP0011`, `PP0012` | Remover o `#define` / `#include` não utilizado |
+| `PP0017` | Reindentar a linha, usando o estilo de formatação configurado |
+| `PP0018` | Renomear para o estilo configurado |
+| `PP0019` | Corrigir o nome da diretiva, ou remover as aspas da mensagem |
+
+Os demais não têm correção automática: `PP0001` e `PP0013` dependem de onde o arquivo está; `PP0007` e `PP0008` dependem do que usar no lugar (que só quem escreveu sabe); `PP0014` e `PP0015` são informativos — remover uma `native` ou um `forward` de uma include quebraria quem a consome.
+
+As remoções por "não utilizado" não são oferecidas em arquivos `.inc`, onde o símbolo costuma existir justamente para quem inclui o arquivo. A remoção de corpo ilegal (`PP0002`/`PP0003`), por ser erro de sintaxe, vale em qualquer arquivo.
+
 > ¹ Marcados com `DiagnosticTag::UNNECESSARY` — o editor exibe o símbolo desbotado além do sublinhado diagnóstico.
 
 ## Detalhes

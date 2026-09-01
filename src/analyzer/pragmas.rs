@@ -7,6 +7,7 @@
 use crate::analyzer::{codes, diagnostic::PawnDiagnostic};
 use crate::messages::{Locale, MsgKey, msg};
 use crate::parser::lexer::strip_line_comments;
+use crate::similar::closest;
 use crate::util::to_u32;
 
 /// Diretivas aceitas pelo compilador (`sc2.c`).
@@ -45,39 +46,6 @@ pub enum PragmaFix {
     Rename(String),
     /// Remover as aspas em volta da mensagem de `deprecated`.
     Unquote(String),
-}
-
-/// Distância de edição, limitada a `max`: acima disso a sugestão viraria chute.
-fn edit_distance_within(a: &str, b: &str, max: usize) -> Option<usize> {
-    let (a, b): (Vec<char>, Vec<char>) = (a.chars().collect(), b.chars().collect());
-    if a.len().abs_diff(b.len()) > max {
-        return None;
-    }
-    let mut prev: Vec<usize> = (0..=b.len()).collect();
-    let mut cur = vec![0usize; b.len() + 1];
-    for (i, ca) in a.iter().enumerate() {
-        cur[0] = i + 1;
-        for (j, cb) in b.iter().enumerate() {
-            let cost = usize::from(ca != cb);
-            cur[j + 1] = (prev[j] + cost).min(cur[j] + 1).min(prev[j + 1] + 1);
-        }
-        std::mem::swap(&mut prev, &mut cur);
-    }
-    let d = prev[b.len()];
-    (d <= max).then_some(d)
-}
-
-/// A diretiva conhecida mais próxima de `word`, quando há uma plausível.
-fn closest_known(word: &str) -> Option<&'static str> {
-    let lower = word.to_ascii_lowercase();
-    // Um nome curto tolera menos erro: com `max` fixo, "pack" viraria sugestão
-    // para qualquer palavra de quatro letras.
-    let max = if lower.len() <= 4 { 1 } else { 2 };
-    KNOWN
-        .iter()
-        .filter_map(|k| edit_distance_within(&lower, k, max).map(|d| (d, *k)))
-        .min_by_key(|(d, k)| (*d, k.len()))
-        .map(|(_, k)| k)
 }
 
 /// Uma diretiva `#pragma` malformada, já com a correção sugerida.
@@ -155,7 +123,7 @@ pub fn collect_issues(text: &str) -> Vec<PragmaIssue> {
         }
 
         if !KNOWN.contains(&word.to_ascii_lowercase().as_str()) {
-            let suggestion = closest_known(&word);
+            let suggestion = closest(&word, KNOWN.iter().copied());
             out.push(PragmaIssue {
                 line: to_u32(idx),
                 col: to_u32(name_col),
