@@ -35,7 +35,7 @@ src/
     types.rs           ← ParsedFile, Symbol, SymbolKind, IncludeDirective, Param
     mod.rs             ← re-exports públicos
   analyzer/
-    codes.rs           ← constantes PP0001–PP0013
+    codes.rs           ← constantes PP0001–PP0019
     diagnostic.rs      ← PawnDiagnostic, Severity, construtores
     includes.rs        ← PP0001, PP0013 — resolve #include / #tryinclude
     semantic.rs        ← PP0002, PP0003, PP0004 — erros estruturais

@@ -36,6 +36,23 @@ caso encontre por favor relate para ajudar a manter a consistência dos dados.
   marcação continua virando a descrição, como antes
 - **Tags de documentação no autocomplete** — o trigger `@`, dentro de um
   comentário, passa a oferecer `@param`, `@return` e `@remarks` com snippets
+- **Padrão próprio no estilo de nomenclatura** — um item da lista de estilos
+  aceitos escrito entre barras (`/^g_[a-z][a-zA-Z0-9]*$/`) passa a ser lido como
+  expressão regular, para convenções que os cinco estilos embutidos não descrevem
+  — prefixo de global, notação húngara. Convive com eles pela regra que já valia:
+  o nome é aceito se casar com **qualquer** critério da categoria.
+
+  O padrão é âncorado como `^(?:…)$` — descreve o nome inteiro, e o agrupamento
+  impede que uma alternância no topo ancore só os extremos. O `_` inicial **não**
+  é removido antes da comparação, ao contrário dos estilos embutidos: quem
+  escreve o padrão decide se o aceita. Um padrão inválido é ignorado sem derrubar
+  a análise nem os demais critérios da categoria.
+
+  Não gera sugestão de renomeação: de um regex arbitrário dá para saber se o nome
+  passa, não como reescrevê-lo. Por isso o critério é um tipo próprio (`Rule`) em
+  vez de uma variante de `Case`, que alimenta o gerador de nomes. A crate `regex`
+  tem tempo de execução linear garantido, então um padrão custoso não degrada a
+  análise
 - **Diagnósticos e hovers traduzidos para Espanhol, Romeno e Russo** — as tabelas
   de mensagens `messages/langs/{es,ro,ru}.rs` existiam como esqueleto (texto ainda
   em inglês, copiado de `en.rs`) e agora estão de fato traduzidas: as 75 mensagens
