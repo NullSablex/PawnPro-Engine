@@ -163,6 +163,38 @@ mod tests {
         assert_eq!(r.kind, NameIssueKind::Placeholder);
     }
 
+    #[test]
+    fn user_regex_accepts_its_own_convention() {
+        let c = cfg_style(&["/^g_[a-z][a-zA-Z0-9]*$/"]);
+        assert!(ev(&sited("g_playerHealth", false, NameCategory::Function), &c).is_none());
+    }
+
+    #[test]
+    fn user_regex_flags_what_it_does_not_match() {
+        let c = cfg_style(&["/^g_[a-z][a-zA-Z0-9]*$/"]);
+        let r = ev(&sited("playerHealth", false, NameCategory::Function), &c).unwrap();
+        assert_eq!(
+            r.kind,
+            NameIssueKind::WrongStyle(vec!["/^g_[a-z][a-zA-Z0-9]*$/".to_string()])
+        );
+    }
+
+    #[test]
+    fn builtin_and_user_regex_coexist() {
+        // A categoria aceita o nome que casar com QUALQUER critério.
+        let c = cfg_style(&["camelCase", "/^g_.+$/"]);
+        assert!(ev(&sited("playerHealth", false, NameCategory::Function), &c).is_none());
+        assert!(ev(&sited("g_ANYTHING", false, NameCategory::Function), &c).is_none());
+        assert!(ev(&sited("player_health", false, NameCategory::Function), &c).is_some());
+    }
+
+    #[test]
+    fn invalid_user_regex_is_ignored_without_breaking_the_rest() {
+        let c = cfg_style(&["/[unclosed/", "camelCase"]);
+        assert!(ev(&sited("playerHealth", false, NameCategory::Function), &c).is_none());
+        assert!(ev(&sited("DoThing", false, NameCategory::Function), &c).is_some());
+    }
+
     fn cfg_style(functions: &[&str]) -> NamingConfig {
         let mut c = cfg();
         c.style.functions = functions.iter().map(|s| (*s).to_string()).collect();
