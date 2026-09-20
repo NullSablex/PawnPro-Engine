@@ -1,3 +1,25 @@
+> [!IMPORTANT]
+> ## Este repositório foi arquivado
+>
+> O motor de análise passou a fazer parte do **[PawnPro-Core](https://github.com/NullSablex/PawnPro-Core)**,
+> onde vive como a crate `crates/engine` — biblioteca de um binário único, no
+> lugar de um processo à parte. O desenvolvimento continua lá.
+>
+> | Para | Vá para |
+> |---|---|
+> | Código e histórico novo | [PawnPro-Core](https://github.com/NullSablex/PawnPro-Core) |
+> | Binário | As [releases do PawnPro-Core](https://github.com/NullSablex/PawnPro-Core/releases), ou a própria extensão, que já o traz |
+> | Issues e pull requests | [Issues do PawnPro-Core](https://github.com/NullSablex/PawnPro-Core/issues) |
+> | Documentação | <https://pawnpro-core.nullsablex.com/> |
+>
+> **Por que a mudança:** a extensão coordenava três processos por fora — o
+> editor, o motor e o depurador — e cada um tinha a sua cópia da configuração e
+> dos includes. Com uma resposta só para cada pergunta, o IntelliSense deixa de
+> discordar do que a compilação enxerga. A última versão publicada aqui foi a
+> **1.4.0**; a continuação está na **0.1.0** do núcleo.
+>
+> As releases e o histórico deste repositório ficam de pé, para referência.
+
 <div align="center">
   <img src="images/logo.png" alt="PawnPro Engine" />
 
